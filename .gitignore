@@ -1,6 +1,6 @@
 # Binaries
-/xboard-node
-/xboard-node-linux-*
+/corade
+/corade-linux-*
 *.exe
 
 # Config files (may contain secrets)

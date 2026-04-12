@@ -1,13 +1,13 @@
-# Xboard Node Configuration
+# Corade Configuration
 # Copy this file to config.yml and modify as needed
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PANEL MODE (Default)
-# Connect to an Xboard panel for config / users / reporting.
+# Connect to a Corade-managed panel or any Xboard-compatible API for config / users / reporting.
 # ══════════════════════════════════════════════════════════════════════════════
 
 panel:
-  # Xboard panel URL (required in panel mode)
+  # Corade / Xboard-compatible panel URL (required in panel mode)
   url: "https://panel.example.com"
   # Server communication token (required in panel mode)
   token: "your-server-token"
@@ -18,8 +18,8 @@ panel:
 kernel:
   # Kernel type: "singbox" (default) or "xray"
   type: "singbox"
-  # Directory to store generated configs (default: /etc/xboard-node)
-  config_dir: "/etc/xboard-node"
+  # Directory to store generated configs (default: /etc/corade)
+  config_dir: "/etc/corade"
   # Kernel log level: debug/info/warn/error (default: warn)
   log_level: "warn"
 
@@ -35,7 +35,7 @@ cert:
   #   CF_API_TOKEN: "your-cloudflare-api-token"
   # cert_file: "/etc/ssl/certs/cert.pem"
   # key_file: "/etc/ssl/private/key.pem"
-  # cert_dir: "/etc/xboard-node/certs"
+  # cert_dir: "/etc/corade/certs"
 
 log:
   level: "info"
@@ -77,7 +77,7 @@ log:
 #       domain: "node2.example.com"
 #   - node_id: 3
 #     kernel:
-#       config_dir: "/etc/xboard-node/custom-node-3"
+#       config_dir: "/etc/corade/custom-node-3"
 
 # Runtime memory tuning (optional)
 # runtime:

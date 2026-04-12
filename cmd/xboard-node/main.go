@@ -30,7 +30,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("xboard-node %s (built %s)\n", version, buildTime)
+		fmt.Printf("Corade %s (built %s)\n", version, buildTime)
 		os.Exit(0)
 	}
 
@@ -129,7 +129,7 @@ func runWithReload(initialCfg *config.Config, configPath string) {
 		}
 
 		nodes := cfg.ExpandNodes()
-		nlog.Core().Info(fmt.Sprintf("xboard-node %s starting, %d nodes", version, len(nodes)))
+		nlog.Core().Info(fmt.Sprintf("Corade %s starting, %d nodes", version, len(nodes)))
 
 		errCh := make(chan error, len(nodes))
 		var wg sync.WaitGroup

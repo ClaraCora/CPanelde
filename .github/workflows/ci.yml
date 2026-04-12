@@ -59,8 +59,8 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: xboard-node-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: xboard-node-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: corade-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: corade-${{ matrix.goos }}-${{ matrix.goarch }}
 
   build-docker:
     name: Build & Push Docker Image
@@ -92,9 +92,9 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/cedar2025/xboard-node:latest
-            ghcr.io/cedar2025/xboard-node:${{ github.sha }}
-            ${{ startsWith(github.ref, 'refs/tags/') && format('ghcr.io/cedar2025/xboard-node:{0}', github.ref_name) || '' }}
+            ghcr.io/claracora/corade:latest
+            ghcr.io/claracora/corade:${{ github.sha }}
+            ${{ startsWith(github.ref, 'refs/tags/') && format('ghcr.io/claracora/corade:{0}', github.ref_name) || '' }}
 
   release:
     name: Release
@@ -116,5 +116,5 @@ jobs:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'dev' }}
           make_latest: ${{ startsWith(github.ref, 'refs/tags/') }}
           files: |
-            dist/xboard-node-linux-amd64
-            dist/xboard-node-linux-arm64
+            dist/corade-linux-amd64
+            dist/corade-linux-arm64

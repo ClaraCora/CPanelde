@@ -234,7 +234,7 @@ func (c *Config) setDefaults() {
 		c.Kernel.Type = "singbox"
 	}
 	if c.Kernel.ConfigDir == "" {
-		c.Kernel.ConfigDir = "/etc/xboard-node"
+		c.Kernel.ConfigDir = "/etc/corade"
 	}
 	if c.Kernel.GeoDataDir == "" {
 		c.Kernel.GeoDataDir = c.Kernel.ConfigDir

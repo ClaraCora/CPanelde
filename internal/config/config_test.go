@@ -67,7 +67,7 @@ panel:
 	if cfg.Kernel.Type != "singbox" {
 		t.Errorf("default kernel.type: got %q, want singbox", cfg.Kernel.Type)
 	}
-	if cfg.Kernel.ConfigDir != "/etc/xboard-node" {
+	if cfg.Kernel.ConfigDir != "/etc/corade" {
 		t.Errorf("default config_dir: got %q", cfg.Kernel.ConfigDir)
 	}
 	if cfg.Kernel.LogLevel != "warn" {
@@ -82,7 +82,7 @@ panel:
 	if cfg.Cert.HTTPPort != 80 {
 		t.Errorf("default http_port: got %d, want 80", cfg.Cert.HTTPPort)
 	}
-	expectedCertDir := filepath.Join("/etc/xboard-node", "certs")
+	expectedCertDir := filepath.Join("/etc/corade", "certs")
 	if cfg.Cert.CertDir != expectedCertDir {
 		t.Errorf("default cert_dir: got %q, want %q", cfg.Cert.CertDir, expectedCertDir)
 	}

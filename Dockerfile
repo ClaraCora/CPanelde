@@ -14,18 +14,18 @@ RUN CGO_ENABLED=0 go build -ldflags "-s -w \
     -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev) \
     -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     -tags "with_quic with_utls with_wireguard with_clash_api" \
-    -o xboard-node ./cmd/xboard-node
+    -o corade ./cmd/xboard-node
 
 # Runtime stage — sing-box & xray-core are embedded as Go libraries
 FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates tzdata
 
-COPY --from=builder /build/xboard-node /usr/local/bin/xboard-node
+COPY --from=builder /build/corade /usr/local/bin/corade
 
-RUN mkdir -p /etc/xboard-node
+RUN mkdir -p /etc/corade
 
-WORKDIR /etc/xboard-node
+WORKDIR /etc/corade
 
 # Config can be provided via file mount OR environment variables.
 # Env var mode (no config file needed):
@@ -33,7 +33,7 @@ WORKDIR /etc/xboard-node
 #     -e apiHost=https://panel.example.com \
 #     -e apiKey=YOUR_TOKEN \
 #     -e nodeID=1 \
-#     ghcr.io/cedar2025/xboard-node:latest
+#     ghcr.io/claracora/corade:latest
 #
 # Supported env vars:
 #   apiHost  / API_HOST    → panel URL
@@ -46,5 +46,5 @@ WORKDIR /etc/xboard-node
 #   keyFile  / KEY_FILE    → TLS key path
 #   logLevel / LOG_LEVEL   → log level
 
-ENTRYPOINT ["xboard-node"]
-CMD ["-c", "/etc/xboard-node/config.yml"]
+ENTRYPOINT ["corade"]
+CMD ["-c", "/etc/corade/config.yml"]

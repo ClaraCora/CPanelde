@@ -70,7 +70,7 @@ func (m *Manager) setCertPaths() {
 	case "http", "dns", "self", "content":
 		dir := m.cfg.CertDir
 		if dir == "" {
-			dir = "/etc/xboard-node/certs"
+			dir = "/etc/corade/certs"
 		}
 		domain := m.cfg.Domain
 		if domain == "" {

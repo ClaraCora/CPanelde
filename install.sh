@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# xboard-node Multi-Node Deploy Script
+# Corade Multi-Node Deploy Script
 # Supports: Ubuntu 20+, Debian 11+, CentOS 8+, Alpine 3.18+
 #
 # One-command deploy (non-interactive):
@@ -25,11 +25,16 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-INSTALL_DIR="/usr/local/bin"
-CONFIG_DIR="/etc/xboard-node"
-SERVICE_TEMPLATE="xboard-node@.service"
+APP_NAME="Corade"
+BIN_NAME="corade"
+CONFIG_DIR="/etc/corade"
+SERVICE_NAME="corade"
+SERVICE_TEMPLATE="${SERVICE_NAME}@.service"
 DOCKER_COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
-DOCKER_IMAGE="ghcr.io/cedar2025/xboard-node:latest"
+DOCKER_IMAGE="ghcr.io/claracora/corade:latest"
+INSTALL_DIR="/usr/local/bin"
+RELEASE_BASE_URL="https://github.com/ClaraCora/Corade/releases/latest/download"
+DOCS_URL="https://github.com/ClaraCora/Corade"
 
 # Parsed parameters (populated by parse_args)
 PANEL_URL=""
@@ -152,43 +157,43 @@ install_deps() {
 # ─── Binary Install ──────────────────────────────────────────────────
 
 is_binary_installed() {
-    [ -x "${INSTALL_DIR}/xboard-node" ]
+    [ -x "${INSTALL_DIR}/${BIN_NAME}" ]
 }
 
 install_binary() {
     if is_binary_installed; then
-        log_info "xboard-node binary already installed"
+        log_info "${APP_NAME} binary already installed"
         return
     fi
 
-    log_step "Installing xboard-node binary..."
+    log_step "Installing ${APP_NAME} binary..."
 
     local src=""
 
-    if [ -f "./xboard-node" ]; then
-        src="./xboard-node"
-    elif [ -f "./xboard-node-linux-${ARCH}" ]; then
-        src="./xboard-node-linux-${ARCH}"
+    if [ -f "./${BIN_NAME}" ]; then
+        src="./${BIN_NAME}"
+    elif [ -f "./${BIN_NAME}-linux-${ARCH}" ]; then
+        src="./${BIN_NAME}-linux-${ARCH}"
     fi
 
     if [ -n "$src" ]; then
-        cp "$src" "${INSTALL_DIR}/xboard-node"
+        cp "$src" "${INSTALL_DIR}/${BIN_NAME}"
         log_info "Installed from local file: $src"
     else
-        local url="https://github.com/cedar2025/xboard-node/releases/latest/download/xboard-node-linux-${ARCH}"
+        local url="${RELEASE_BASE_URL}/${BIN_NAME}-linux-${ARCH}"
         log_info "Downloading from GitHub releases..."
-        if wget -q "$url" -O "${INSTALL_DIR}/xboard-node" 2>/dev/null; then
+        if wget -q "$url" -O "${INSTALL_DIR}/${BIN_NAME}" 2>/dev/null; then
             log_info "Downloaded successfully"
-        elif curl -fsSL "$url" -o "${INSTALL_DIR}/xboard-node" 2>/dev/null; then
+        elif curl -fsSL "$url" -o "${INSTALL_DIR}/${BIN_NAME}" 2>/dev/null; then
             log_info "Downloaded successfully"
         else
-            log_error "Failed to download. Place xboard-node binary in current directory and retry."
+            log_error "Failed to download. Place ${BIN_NAME} binary in current directory and retry."
             exit 1
         fi
     fi
 
-    chmod +x "${INSTALL_DIR}/xboard-node"
-    log_info "xboard-node installed to ${INSTALL_DIR}/xboard-node"
+    chmod +x "${INSTALL_DIR}/${BIN_NAME}"
+    log_info "${APP_NAME} installed to ${INSTALL_DIR}/${BIN_NAME}"
 }
 
 # ─── Systemd Template ────────────────────────────────────────────────
@@ -206,13 +211,13 @@ install_systemd_template() {
 
     cat > "/etc/systemd/system/${SERVICE_TEMPLATE}" << 'UNIT'
 [Unit]
-Description=Xboard Node Backend (node %i)
-Documentation=https://github.com/cedar2025/xboard-node
+Description=Corade Node Backend (node %i)
+Documentation=https://github.com/ClaraCora/Corade
 After=network.target nss-lookup.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/xboard-node -c /etc/xboard-node/%i/config.yml
+ExecStart=/usr/local/bin/corade -c /etc/corade/%i/config.yml
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576
@@ -244,14 +249,15 @@ migrate_legacy_config() {
             mv "${CONFIG_DIR}/config.yml" "${CONFIG_DIR}/${legacy_id}/config.yml"
 
             if command -v systemctl >/dev/null 2>&1; then
-                systemctl stop xboard-node 2>/dev/null || true
-                systemctl disable xboard-node 2>/dev/null || true
+                systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
+                systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
                 rm -f /etc/systemd/system/xboard-node.service
+                rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
 
                 install_systemd_template
-                systemctl enable "xboard-node@${legacy_id}" 2>/dev/null || true
-                systemctl start "xboard-node@${legacy_id}" 2>/dev/null || true
-                log_info "Migrated service: xboard-node → xboard-node@${legacy_id}"
+                systemctl enable "${SERVICE_NAME}@${legacy_id}" 2>/dev/null || true
+                systemctl start "${SERVICE_NAME}@${legacy_id}" 2>/dev/null || true
+                log_info "Migrated service: ${SERVICE_NAME} → ${SERVICE_NAME}@${legacy_id}"
             fi
         fi
     fi
@@ -354,12 +360,12 @@ add_node_native() {
 
     if command -v systemctl >/dev/null 2>&1; then
         install_systemd_template
-        systemctl enable "xboard-node@${node_id}"
-        systemctl start "xboard-node@${node_id}"
-        log_info "Service started: xboard-node@${node_id}"
+        systemctl enable "${SERVICE_NAME}@${node_id}"
+        systemctl start "${SERVICE_NAME}@${node_id}"
+        log_info "Service started: ${SERVICE_NAME}@${node_id}"
     else
         log_warn "No systemd found. Start manually:"
-        echo "  xboard-node -c ${CONFIG_DIR}/${node_id}/config.yml"
+        echo "  ${BIN_NAME} -c ${CONFIG_DIR}/${node_id}/config.yml"
     fi
 }
 
@@ -388,7 +394,7 @@ add_node_docker() {
         fi
         cd "${CONFIG_DIR}"
         ${COMPOSE_CMD} up -d "node-${node_id}"
-        log_info "Container started: xboard-node-${node_id}"
+        log_info "Container started: ${SERVICE_NAME}-${node_id}"
     else
         log_warn "Docker not installed. Install Docker first, then run:"
         echo "  cd ${CONFIG_DIR} && docker compose up -d"
@@ -410,7 +416,7 @@ regenerate_docker_compose() {
     fi
 
     cat > "${DOCKER_COMPOSE_FILE}" << 'HEADER'
-# Auto-generated by install.sh — do not edit manually.
+# Auto-generated by Corade installer — do not edit manually.
 # Regenerated each time a node is added or removed.
 
 services:
@@ -420,12 +426,12 @@ HEADER
         cat >> "${DOCKER_COMPOSE_FILE}" << EOF
   node-${nid}:
     image: ${DOCKER_IMAGE}
-    container_name: xboard-node-${nid}
+    container_name: ${SERVICE_NAME}-${nid}
     restart: always
     network_mode: host
     volumes:
-      - ./${nid}/config.yml:/etc/xboard-node/config.yml:ro
-      - ./${nid}:/etc/xboard-node/data
+      - ./${nid}/config.yml:${CONFIG_DIR}/config.yml:ro
+      - ./${nid}:${CONFIG_DIR}/data
     logging:
       driver: json-file
       options:
@@ -458,15 +464,15 @@ deploy_node() {
 
     if [ "$DOCKER_MODE" -eq 1 ]; then
         echo "  Manage:"
-        echo "    Logs:    docker logs -f xboard-node-${NODE_ID}"
+        echo "    Logs:    docker logs -f ${SERVICE_NAME}-${NODE_ID}"
         echo "    Stop:    cd ${CONFIG_DIR} && docker compose stop node-${NODE_ID}"
         echo "    Restart: cd ${CONFIG_DIR} && docker compose restart node-${NODE_ID}"
     else
         echo "  Manage:"
-        echo "    Status:  systemctl status xboard-node@${NODE_ID}"
-        echo "    Logs:    journalctl -u xboard-node@${NODE_ID} -f"
-        echo "    Stop:    systemctl stop xboard-node@${NODE_ID}"
-        echo "    Restart: systemctl restart xboard-node@${NODE_ID}"
+        echo "    Status:  systemctl status ${SERVICE_NAME}@${NODE_ID}"
+        echo "    Logs:    journalctl -u ${SERVICE_NAME}@${NODE_ID} -f"
+        echo "    Stop:    systemctl stop ${SERVICE_NAME}@${NODE_ID}"
+        echo "    Restart: systemctl restart ${SERVICE_NAME}@${NODE_ID}"
     fi
 
     echo ""
@@ -492,13 +498,13 @@ remove_node() {
     log_step "Removing node ${node_id}..."
 
     if command -v systemctl >/dev/null 2>&1; then
-        systemctl stop "xboard-node@${node_id}" 2>/dev/null || true
-        systemctl disable "xboard-node@${node_id}" 2>/dev/null || true
+        systemctl stop "${SERVICE_NAME}@${node_id}" 2>/dev/null || true
+        systemctl disable "${SERVICE_NAME}@${node_id}" 2>/dev/null || true
         log_info "Systemd service stopped and disabled"
     fi
 
     if command -v docker >/dev/null 2>&1; then
-        docker rm -f "xboard-node-${node_id}" 2>/dev/null || true
+        docker rm -f "${SERVICE_NAME}-${node_id}" 2>/dev/null || true
     fi
 
     rm -rf "${CONFIG_DIR}/${node_id}"
@@ -529,12 +535,12 @@ list_nodes() {
 
         local status="${RED}stopped${NC}"
         if command -v systemctl >/dev/null 2>&1; then
-            if systemctl is-active "xboard-node@${nid}" >/dev/null 2>&1; then
+            if systemctl is-active "${SERVICE_NAME}@${nid}" >/dev/null 2>&1; then
                 status="${GREEN}running (systemd)${NC}"
             fi
         fi
         if command -v docker >/dev/null 2>&1; then
-            if docker inspect -f '{{.State.Running}}' "xboard-node-${nid}" 2>/dev/null | grep -q true; then
+            if docker inspect -f '{{.State.Running}}' "${SERVICE_NAME}-${nid}" 2>/dev/null | grep -q true; then
                 status="${GREEN}running (docker)${NC}"
             fi
         fi
@@ -557,16 +563,16 @@ list_nodes() {
 # ─── Update / Uninstall ──────────────────────────────────────────────
 
 update_binary() {
-    log_step "Updating xboard-node binary..."
+    log_step "Updating ${APP_NAME} binary..."
 
     detect_arch
 
-    local url="https://github.com/cedar2025/xboard-node/releases/latest/download/xboard-node-linux-${ARCH}"
-    local tmp="/tmp/xboard-node-update"
+    local url="${RELEASE_BASE_URL}/${BIN_NAME}-linux-${ARCH}"
+    local tmp="/tmp/${BIN_NAME}-update"
 
     if wget -q "$url" -O "$tmp" 2>/dev/null || curl -fsSL "$url" -o "$tmp" 2>/dev/null; then
         chmod +x "$tmp"
-        mv "$tmp" "${INSTALL_DIR}/xboard-node"
+        mv "$tmp" "${INSTALL_DIR}/${BIN_NAME}"
         log_info "Binary updated"
     else
         log_error "Failed to download update"
@@ -579,9 +585,9 @@ update_binary() {
             [ -f "${dir}config.yml" ] || continue
             local nid
             nid=$(basename "$dir")
-            if systemctl is-active "xboard-node@${nid}" >/dev/null 2>&1; then
-                systemctl restart "xboard-node@${nid}"
-                log_info "Restarted: xboard-node@${nid}"
+            if systemctl is-active "${SERVICE_NAME}@${nid}" >/dev/null 2>&1; then
+                systemctl restart "${SERVICE_NAME}@${nid}"
+                log_info "Restarted: ${SERVICE_NAME}@${nid}"
             fi
         done
     fi
@@ -593,19 +599,21 @@ update_binary() {
 }
 
 do_uninstall() {
-    log_step "Uninstalling xboard-node..."
+    log_step "Uninstalling ${APP_NAME}..."
 
     if command -v systemctl >/dev/null 2>&1; then
         for dir in "${CONFIG_DIR}"/*/; do
             [ -f "${dir}config.yml" ] || continue
             local nid
             nid=$(basename "$dir")
-            systemctl stop "xboard-node@${nid}" 2>/dev/null || true
-            systemctl disable "xboard-node@${nid}" 2>/dev/null || true
+            systemctl stop "${SERVICE_NAME}@${nid}" 2>/dev/null || true
+            systemctl disable "${SERVICE_NAME}@${nid}" 2>/dev/null || true
         done
-        systemctl stop xboard-node 2>/dev/null || true
-        systemctl disable xboard-node 2>/dev/null || true
+        systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
+        systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
         rm -f /etc/systemd/system/xboard-node.service
+        rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+        rm -f /etc/systemd/system/xboard-node@.service
         rm -f "/etc/systemd/system/${SERVICE_TEMPLATE}"
         systemctl daemon-reload
     fi
@@ -615,11 +623,11 @@ do_uninstall() {
             [ -f "${dir}config.yml" ] || continue
             local nid
             nid=$(basename "$dir")
-            docker rm -f "xboard-node-${nid}" 2>/dev/null || true
+            docker rm -f "${SERVICE_NAME}-${nid}" 2>/dev/null || true
         done
     fi
 
-    rm -f "${INSTALL_DIR}/xboard-node"
+    rm -f "${INSTALL_DIR}/${BIN_NAME}"
     log_info "Binary removed"
 
     echo ""
@@ -631,7 +639,7 @@ do_uninstall() {
         log_info "Configs preserved at ${CONFIG_DIR}/"
     fi
 
-    log_info "xboard-node uninstalled"
+    log_info "${APP_NAME} uninstalled"
 }
 
 # ─── Print Help ───────────────────────────────────────────────────────
@@ -639,7 +647,7 @@ do_uninstall() {
 print_help() {
     cat << 'HELP'
 
-  xboard-node Deploy Script
+  Corade Deploy Script
 
   DEPLOY A NODE (one command, repeat for each node):
 
@@ -680,7 +688,7 @@ print_help() {
       -e apiHost=https://panel.example.com \
       -e apiKey=YOUR_TOKEN \
       -e nodeID=1 \
-      ghcr.io/cedar2025/xboard-node:latest
+      ${DOCKER_IMAGE}
 
 HELP
 }
