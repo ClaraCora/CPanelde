@@ -80,12 +80,12 @@ enable_chrony_service() {
   fi
 
   if service_exists chronyd.service; then
-    info "启用并启动 chronyd.service"
-    systemctl enable --now chronyd.service
+    warn "检测到 chronyd.service 是别名，改为启用并启动 chrony.service"
+    systemctl enable --now chrony.service
     return
   fi
 
-  error "已安装 chrony，但未找到 [chrony.service](time-sync-check.sh:1) 或 [chronyd.service](time-sync-check.sh:1)"
+  error "已安装 chrony，但未找到 [chrony.service](time-sync-check.sh:1) 或可用的 [chronyd.service](time-sync-check.sh:1)"
   exit 1
 }
 
