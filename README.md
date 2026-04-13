@@ -25,13 +25,13 @@ Corade is a self-branded node backend compatible with the Xboard API. It is desi
 Install a node directly with [`install.sh`](install.sh):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/main/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1
 ```
 
 If [`curl`](README.md) is unavailable, use [`wget`](README.md):
 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/Corade/main/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1
+bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1
 ```
 
 Common parameters:
@@ -44,7 +44,7 @@ Common parameters:
 Example with explicit kernel:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/main/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1 -k xray
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1 -k xray
 ```
 
 ### Add a second node on the same VPS
@@ -52,10 +52,24 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/main/instal
 Run [`install.sh`](install.sh) again with another [`node_id`](config.yml.example:61):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/main/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 2
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 2
 ```
 
 This will create another instance such as [`corade@2`](README.md) while keeping [`corade@1`](README.md) running.
+
+### Time sync quick fix
+
+If SS2022 logs show [`bad timestamp`](README.md:241), run the time sync helper script first:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/time-sync-check.sh)
+```
+
+If [`curl`](README.md) is unavailable:
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/Corade/dev/time-sync-check.sh)
+```
 
 ## Install Methods
 

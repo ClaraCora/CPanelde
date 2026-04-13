@@ -25,13 +25,13 @@ Corade 是一个兼容 Xboard API 的自有品牌节点后端，适用于希望�
 使用 [`install.sh`](install.sh) 一键安装节点：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/main/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1
 ```
 
 如果系统没有 [`curl`](README-cn.md)，可以使用 [`wget`](README-cn.md)：
 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/Corade/main/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1
+bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1
 ```
 
 常用参数说明：
@@ -44,7 +44,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/Corade/main/install
 指定内核安装示例：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/main/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1 -k xray
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1 -k xray
 ```
 
 ### 在同一台 VPS 再添加第二个节点
@@ -52,7 +52,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/main/instal
 只需要再次执行一次 [`install.sh`](install.sh)，并传入新的 [`node_id`](config.yml.example:61)：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/main/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 2
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 2
 ```
 
 例如：
@@ -60,6 +60,20 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/main/instal
 - 节点 2 是 VLESS
 
 只要面板中的节点 ID 不同、监听端口不冲突，就可以在同一台机器同时运行多个 [`corade@<id>`](README-cn.md) 实例。
+
+### 时间同步快速修复
+
+如果 SS2022 日志里出现 [`bad timestamp`](README-cn.md:232)，先执行时间同步脚本：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/time-sync-check.sh)
+```
+
+如果系统没有 [`curl`](README-cn.md)：
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/Corade/dev/time-sync-check.sh)
+```
 
 ## 安装方式
 
