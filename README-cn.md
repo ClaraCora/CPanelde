@@ -184,6 +184,22 @@ systemctl disable corade@1
 ss -lntp | grep corade
 ```
 
+### 更新所有节点
+
+更新二进制并重启当前运行中的所有节点：
+
+```bash
+bash install.sh update
+```
+
+### 移除指定节点
+
+例如只移除节点 2：
+
+```bash
+bash install.sh remove 2
+```
+
 ## 卸载
 
 ### 卸载单个节点

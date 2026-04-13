@@ -180,6 +180,22 @@ systemctl disable corade@1
 ss -lntp | grep corade
 ```
 
+### Update all nodes
+
+Update the binary and restart all running nodes:
+
+```bash
+bash install.sh update
+```
+
+### Remove a specific node
+
+Remove only node 2:
+
+```bash
+bash install.sh remove 2
+```
+
 ## Uninstall
 
 ### Uninstall one node
