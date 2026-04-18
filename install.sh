@@ -1,22 +1,5 @@
-#!/bin/bash
-set -e
-
-# Corade Multi-Node Deploy Script
-# Supports: Ubuntu 20+, Debian 11+, CentOS 8+, Alpine 3.18+
-#
-# One-command deploy (non-interactive):
-#   bash install.sh -a https://panel.example.com -t YOUR_TOKEN -n 1
-#   bash install.sh -a https://panel.example.com -t YOUR_TOKEN -n 2 -k xray
-#   bash install.sh -a https://panel.example.com -t YOUR_TOKEN -n 3 --docker
-#
-# Interactive:
-#   bash install.sh
-#
-# Management:
-#   bash install.sh list
-#   bash install.sh remove <node_id>
-#   bash install.sh update
-#   bash install.sh uninstall
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -25,103 +8,330 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-APP_NAME="Node Service"
-BIN_NAME="corade"
-CONFIG_DIR="/etc/corade"
-SERVICE_NAME="corade"
-SERVICE_TEMPLATE="${SERVICE_NAME}@.service"
-DOCKER_COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
-DOCKER_IMAGE="ghcr.io/claracora/corade:latest"
-INSTALL_DIR="/usr/local/bin"
-RELEASE_BASE_URL="https://github.com/ClaraCora/Corade/releases/latest/download"
+APP_NAME="Corade"
+INSTALL_ROOT="/etc/corade"
+BACKUP_DIR="${INSTALL_ROOT}/backups"
+INSTALL_META="${INSTALL_ROOT}/install-meta.json"
+CONFIG_FILE="${INSTALL_ROOT}/config.yml"
+CREDENTIALS_FILE="${INSTALL_ROOT}/credentials.env"
+BINARY_PATH="/usr/local/bin/corade"
+SERVICE_NAME="corade.service"
+SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
+CLI_PATH="/usr/local/bin/coradectl"
+INSTALLER_COPY_PATH="${INSTALL_ROOT}/install.sh"
+CLI_BINARY_SOURCE=""
+DEFAULT_HEALTH_PORT=65530
+DEFAULT_KERNEL="singbox"
+DEFAULT_MODE="node"
+DEFAULT_ACTION="install"
+DEFAULT_RELEASE_VERSION="latest"
+DEFAULT_LOG_LEVEL="info"
+DEFAULT_KERNEL_LOG_LEVEL="warn"
+DEFAULT_DOWNLOAD_BASE="https://github.com/ClaraCora/Corade/releases"
 
-# Parsed parameters (populated by parse_args)
+ACTION="${DEFAULT_ACTION}"
+MODE=""
 PANEL_URL=""
-PANEL_TOKEN=""
+TOKEN=""
 NODE_ID=""
 NODE_TYPE=""
-KERNEL_TYPE="singbox"
-DOCKER_MODE=0
-SUBCOMMAND=""
+MACHINE_ID=""
+KERNEL_TYPE="${DEFAULT_KERNEL}"
+RELEASE_VERSION="${DEFAULT_RELEASE_VERSION}"
+HEALTH_PORT="${DEFAULT_HEALTH_PORT}"
+HEALTH_ENABLED=1
+RUNTIME_GOMEMLIMIT=""
+RUNTIME_GOGC=""
+BINARY_SOURCE=""
+CLI_BINARY_SOURCE=""
+FORCE_RECONFIGURE=0
+PURGE=0
+YES=0
+ARCH=""
+OS=""
+DOWNLOAD_URL=""
+CURRENT_STATE="fresh"
+TMP_DIR=""
+BACKUP_PATH=""
+SERVICE_EXISTED=0
+CLEANUP_DONE=0
 
 log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step()  { echo -e "${CYAN}[STEP]${NC} ${BOLD}$1${NC}"; }
 
-# ─── Argument Parsing ─────────────────────────────────────────────────
+cleanup_tmp() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+    if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+        rm -rf "$TMP_DIR"
+    fi
+}
+
+load_health_port_from_config() {
+    local cfg_path="$1"
+    if [ ! -f "$cfg_path" ]; then
+        return
+    fi
+    local parsed
+    if [ -x "$CLI_PATH" ]; then
+        parsed=$("$CLI_PATH" config health-port --config "$cfg_path" 2>/dev/null)
+    else
+        parsed=$(grep -m1 'health_port:' "$cfg_path" 2>/dev/null | sed 's/.*health_port:[[:space:]]*//' | tr -cd '0-9')
+    fi
+    if [ -n "$parsed" ] && [ "$parsed" -ge 0 ] 2>/dev/null; then
+        HEALTH_PORT="$parsed"
+        if [ "$HEALTH_PORT" -eq 0 ]; then
+            HEALTH_ENABLED=0
+        else
+            HEALTH_ENABLED=1
+        fi
+    fi
+}
+
+rollback_install() {
+    log_warn "Rolling back installation"
+    if [ -n "$BACKUP_PATH" ] && [ -d "$BACKUP_PATH" ]; then
+        if [ -f "$BACKUP_PATH/corade" ]; then
+            install -m 755 "$BACKUP_PATH/corade" "$BINARY_PATH"
+        else
+            rm -f "$BINARY_PATH"
+        fi
+        if [ -f "$BACKUP_PATH/config.yml" ]; then
+            install -m 600 "$BACKUP_PATH/config.yml" "$CONFIG_FILE"
+        else
+            rm -f "$CONFIG_FILE"
+        fi
+        if [ -f "$BACKUP_PATH/credentials.env" ]; then
+            install -m 600 "$BACKUP_PATH/credentials.env" "$CREDENTIALS_FILE"
+        else
+            rm -f "$CREDENTIALS_FILE"
+        fi
+        if [ -f "$BACKUP_PATH/install-meta.json" ]; then
+            install -m 644 "$BACKUP_PATH/install-meta.json" "$INSTALL_META"
+        else
+            rm -f "$INSTALL_META"
+        fi
+        if [ -f "$BACKUP_PATH/coradectl" ]; then
+            install -m 755 "$BACKUP_PATH/coradectl" "$CLI_PATH"
+        else
+            rm -f "$CLI_PATH"
+        fi
+        if [ -f "$BACKUP_PATH/${SERVICE_NAME}" ]; then
+            install -m 644 "$BACKUP_PATH/${SERVICE_NAME}" "$SERVICE_PATH"
+        else
+            rm -f "$SERVICE_PATH"
+        fi
+    fi
+    load_health_port_from_config "$CONFIG_FILE"
+    systemctl daemon-reload || true
+    if [ "$SERVICE_EXISTED" -eq 1 ] || [ -f "$SERVICE_PATH" ]; then
+        systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
+        systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+        if ! wait_for_health; then
+            log_error "Rollback completed but restored service did not become healthy"
+            show_recent_logs
+            return 1
+        fi
+    else
+        systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+    fi
+    log_warn "Rollback complete"
+}
+
+on_error() {
+    local exit_code=$?
+    local line_no=${1:-unknown}
+    if [ "$exit_code" -ne 0 ]; then
+        log_error "Install failed at line ${line_no} (exit=${exit_code})"
+        if [ -n "$BACKUP_PATH" ]; then
+            rollback_install || true
+        fi
+    fi
+    cleanup_tmp
+    exit "$exit_code"
+}
+trap 'on_error $LINENO' ERR
+trap cleanup_tmp EXIT
+
+usage() {
+    cat <<'HELP'
+
+  Corade Installer
+
+  ACTIONS:
+    install      Install or reconcile the configured deployment (default)
+    upgrade      Upgrade binary and restart service
+    uninstall    Remove installed service and binaries (config kept unless --purge)
+    status       Show current installation status
+    help         Show this help
+
+  MODES (auto-detected from --node-id or --machine-id if omitted):
+    --mode node      Panel single-node mode (default)
+    --mode machine   Panel machine mode
+
+  REQUIRED FOR NODE MODE:
+    --panel, -a      Panel URL
+    --token, -t      Panel server token
+    --node-id, -n    Node ID
+
+  REQUIRED FOR MACHINE MODE:
+    --panel, -a       Panel URL
+    --token, -t       Machine token
+    --machine-id      Machine ID
+
+  OPTIONAL:
+    --node-type, -T     Explicit node type for node mode
+    --kernel, -k        singbox or xray (default: singbox)
+    --version           Release version or latest (default: latest)
+    --binary            Use a local corade binary path instead of downloading
+    --coradectl-binary      Use a local coradectl binary path instead of downloading
+    --health-port       Local health port (default: 65530, use 0 to disable)
+    --gomemlimit        Runtime GOMEMLIMIT value, e.g. 256MiB
+    --gogc              Runtime GOGC value, e.g. 50
+    --force-reconfigure Overwrite an existing install even if mode/target changed
+    --purge             With uninstall, delete /etc/corade too
+    --yes, -y           Non-interactive confirmation for destructive operations
+
+  EXAMPLES:
+    sudo bash install.sh --panel https://panel.example.com --token TOKEN --node-id 1
+    sudo bash install.sh --panel https://panel.example.com --token TOKEN --machine-id 1
+    sudo bash install.sh upgrade
+    sudo bash install.sh uninstall --purge --yes
+
+HELP
+}
 
 parse_args() {
+    local positional=()
     while [ $# -gt 0 ]; do
         case "$1" in
-            -a|--api)       PANEL_URL="$2";    shift 2 ;;
-            -t|--token)     PANEL_TOKEN="$2";  shift 2 ;;
-            -n|--node-id)   NODE_ID="$2";      shift 2 ;;
-            -T|--node-type) NODE_TYPE="$2";    shift 2 ;;
-            -k|--kernel)    KERNEL_TYPE="$2";   shift 2 ;;
-            --docker)       DOCKER_MODE=1;      shift ;;
-            add|remove|list|update|uninstall|help|--help|-h)
-                if [ -z "$SUBCOMMAND" ]; then
-                    SUBCOMMAND="$1"
-                fi
+            install|upgrade|uninstall|status|help)
+                ACTION="$1"
+                shift
+                ;;
+            --mode)
+                MODE="$2"
+                shift 2
+                ;;
+            --panel|-a|--api)
+                PANEL_URL="$2"
+                shift 2
+                ;;
+            --token|-t)
+                TOKEN="$2"
+                shift 2
+                ;;
+            --node-id|-n)
+                NODE_ID="$2"
+                shift 2
+                ;;
+            --node-type|-T)
+                NODE_TYPE="$2"
+                shift 2
+                ;;
+            --machine-id)
+                MACHINE_ID="$2"
+                shift 2
+                ;;
+            --kernel|-k)
+                KERNEL_TYPE="$2"
+                shift 2
+                ;;
+            --version)
+                RELEASE_VERSION="$2"
+                shift 2
+                ;;
+            --binary)
+                BINARY_SOURCE="$2"
+                shift 2
+                ;;
+            --coradectl-binary)
+                CLI_BINARY_SOURCE="$2"
+                shift 2
+                ;;
+            --health-port)
+                HEALTH_PORT="$2"
+                shift 2
+                ;;
+            --gomemlimit)
+                RUNTIME_GOMEMLIMIT="$2"
+                shift 2
+                ;;
+            --gogc)
+                RUNTIME_GOGC="$2"
+                shift 2
+                ;;
+            --force-reconfigure)
+                FORCE_RECONFIGURE=1
+                shift
+                ;;
+            --purge)
+                PURGE=1
+                shift
+                ;;
+            --yes|-y)
+                YES=1
+                shift
+                ;;
+            --help|-h)
+                ACTION="help"
                 shift
                 ;;
             *)
-                if [ "$SUBCOMMAND" = "remove" ] && [ -z "$NODE_ID" ]; then
-                    NODE_ID="$1"
-                fi
+                positional+=("$1")
                 shift
                 ;;
         esac
     done
 
-    # Normalize kernel type
+    if [ ${#positional[@]} -gt 0 ] && [ "$ACTION" = "install" ]; then
+        ACTION="${positional[0]}"
+    fi
+
     case "$KERNEL_TYPE" in
+        singbox|SingBox|SINGBOX) KERNEL_TYPE="singbox" ;;
         xray|Xray|XRAY) KERNEL_TYPE="xray" ;;
-        *) KERNEL_TYPE="singbox" ;;
+        *) ;;
+    esac
+
+    # Auto-detect mode from arguments when --mode is not specified.
+    if [ -z "$MODE" ]; then
+        if [ -n "$MACHINE_ID" ]; then
+            MODE="machine"
+        else
+            MODE="node"
+        fi
+    fi
+
+    case "$MODE" in
+        node|machine) ;;
+        *)
+            log_error "Unsupported mode: $MODE"
+            usage
+            exit 1
+            ;;
     esac
 }
 
-has_all_params() {
-    [ -n "$PANEL_URL" ] && [ -n "$PANEL_TOKEN" ] && [ -n "$NODE_ID" ]
-}
-
-validate_params() {
-    if [ -z "$PANEL_URL" ]; then
-        log_error "Panel URL is required (-a/--api)"
-        exit 1
-    fi
-    if [ -z "$PANEL_TOKEN" ]; then
-        log_error "Server Token is required (-t/--token)"
-        exit 1
-    fi
-    if [ -z "$NODE_ID" ]; then
-        log_error "Node ID is required (-n/--node-id)"
-        exit 1
-    fi
-    if ! [[ "$NODE_ID" =~ ^[0-9]+$ ]]; then
-        log_error "Node ID must be a positive integer, got: $NODE_ID"
-        exit 1
-    fi
-}
-
-# ─── System Detection ────────────────────────────────────────────────
-
 check_root() {
-    if [ "$(id -u)" != "0" ]; then
-        log_error "Please run as root (or with sudo)"
+    if [ "$(id -u)" -ne 0 ]; then
+        log_error "Please run as root or with sudo"
         exit 1
     fi
 }
 
 detect_arch() {
-    ARCH=$(uname -m)
-    case "$ARCH" in
+    local raw
+    raw=$(uname -m)
+    case "$raw" in
         x86_64|amd64) ARCH="amd64" ;;
         aarch64|arm64) ARCH="arm64" ;;
-        armv7l) ARCH="armv7" ;;
         *)
-            log_error "Unsupported architecture: $ARCH"
+            log_error "Unsupported architecture: $raw"
             exit 1
             ;;
     esac
@@ -130,609 +340,509 @@ detect_arch() {
 detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
-        OS=$ID
-    elif [ -f /etc/alpine-release ]; then
-        OS="alpine"
+        OS="$ID"
     else
         OS="unknown"
     fi
 }
 
-install_deps() {
+ensure_systemd() {
+    if ! command -v systemctl >/dev/null 2>&1; then
+        log_error "systemd is required for this installer"
+        exit 1
+    fi
+    if [ ! -d /run/systemd/system ]; then
+        log_error "This host does not appear to be running systemd"
+        exit 1
+    fi
+}
+
+run_with_retry() {
+    local attempts="$1"
+    local delay="$2"
+    shift 2
+    local i=1
+    while [ "$i" -le "$attempts" ]; do
+        if "$@"; then
+            return 0
+        fi
+        if [ "$i" -lt "$attempts" ]; then
+            log_warn "Command failed, retrying in ${delay}s: $*"
+            sleep "$delay"
+        fi
+        i=$((i + 1))
+    done
+    return 1
+}
+
+install_dependencies() {
     case "$OS" in
         ubuntu|debian)
-            apt-get update -qq
-            apt-get install -y -qq wget curl tar >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get install -y -qq curl wget ca-certificates >/dev/null 2>&1
             ;;
         centos|rhel|rocky|almalinux|fedora)
-            yum install -y -q wget curl tar >/dev/null 2>&1
+            if command -v dnf >/dev/null 2>&1; then
+                run_with_retry 5 3 dnf install -y -q curl wget ca-certificates >/dev/null 2>&1
+            else
+                run_with_retry 5 3 yum install -y -q curl wget ca-certificates >/dev/null 2>&1
+            fi
             ;;
-        alpine)
-            apk add --no-cache wget curl tar >/dev/null 2>&1
+        *)
+            log_warn "OS ${OS} is not in the official support set; continuing best-effort"
             ;;
     esac
 }
 
-# ─── Binary Install ──────────────────────────────────────────────────
-
-is_binary_installed() {
-    [ -x "${INSTALL_DIR}/${BIN_NAME}" ]
+ensure_dirs() {
+    mkdir -p "$INSTALL_ROOT" "$BACKUP_DIR"
+    chmod 700 "$INSTALL_ROOT"
 }
 
-install_binary() {
-    if is_binary_installed; then
-        log_info "${APP_NAME} binary already installed"
+validate_positive_int() {
+    local label="$1"
+    local value="$2"
+    if ! [[ "$value" =~ ^[0-9]+$ ]] || [ "$value" -le 0 ]; then
+        log_error "${label} must be a positive integer, got: ${value}"
+        exit 1
+    fi
+}
+
+validate_install_request() {
+    if [ -z "$PANEL_URL" ]; then
+        log_error "Panel URL is required"
+        exit 1
+    fi
+    if [ -z "$TOKEN" ]; then
+        log_error "Token is required"
+        exit 1
+    fi
+    if ! [[ "$HEALTH_PORT" =~ ^[0-9]+$ ]]; then
+        log_error "health-port must be a non-negative integer"
+        exit 1
+    fi
+    if [ "$HEALTH_PORT" -eq 0 ]; then
+        HEALTH_ENABLED=0
+    fi
+    case "$KERNEL_TYPE" in
+        singbox|xray) ;;
+        *)
+            log_error "Kernel must be singbox or xray"
+            exit 1
+            ;;
+    esac
+    case "$MODE" in
+        node)
+            validate_positive_int "Node ID" "$NODE_ID"
+            ;;
+        machine)
+            validate_positive_int "Machine ID" "$MACHINE_ID"
+            ;;
+    esac
+}
+
+detect_current_state() {
+    local has_binary=0 has_config=0 has_service=0
+    [ -x "$BINARY_PATH" ] && has_binary=1
+    [ -f "$CONFIG_FILE" ] && has_config=1
+    [ -f "$SERVICE_PATH" ] && has_service=1
+
+    if [ "$has_binary" -eq 0 ] && [ "$has_config" -eq 0 ] && [ "$has_service" -eq 0 ]; then
+        CURRENT_STATE="fresh"
+    elif [ "$has_binary" -eq 1 ] && [ "$has_config" -eq 1 ] && [ "$has_service" -eq 1 ]; then
+        CURRENT_STATE="installed"
+    else
+        CURRENT_STATE="partial"
+    fi
+}
+
+require_reconfigure_confirmation() {
+    return
+}
+
+select_binary_source() {
+    if [ -n "$BINARY_SOURCE" ]; then
+        if [ ! -f "$BINARY_SOURCE" ]; then
+            log_error "Binary source not found: $BINARY_SOURCE"
+            exit 1
+        fi
+        echo "$BINARY_SOURCE"
         return
     fi
-
-    log_step "Installing ${APP_NAME} binary..."
-
-    local src=""
-
-    if [ -f "./${BIN_NAME}" ]; then
-        src="./${BIN_NAME}"
-    elif [ -f "./${BIN_NAME}-linux-${ARCH}" ]; then
-        src="./${BIN_NAME}-linux-${ARCH}"
+    if [ -f "./corade" ]; then
+        echo "./corade"
+        return
     fi
+    if [ -f "./corade-linux-${ARCH}" ]; then
+        echo "./corade-linux-${ARCH}"
+        return
+    fi
+    echo ""
+}
 
-    if [ -n "$src" ]; then
-        cp "$src" "${INSTALL_DIR}/${BIN_NAME}"
-        log_info "Installed from local file: $src"
+resolve_download_url() {
+    local artifact="$1"
+    if [ "$RELEASE_VERSION" = "latest" ]; then
+        DOWNLOAD_URL="${DEFAULT_DOWNLOAD_BASE}/latest/download/${artifact}"
     else
-        local url="${RELEASE_BASE_URL}/${BIN_NAME}-linux-${ARCH}"
-        log_info "Downloading binary package..."
-        if wget -q "$url" -O "${INSTALL_DIR}/${BIN_NAME}" 2>/dev/null; then
-            log_info "Downloaded successfully"
-        elif curl -fsSL "$url" -o "${INSTALL_DIR}/${BIN_NAME}" 2>/dev/null; then
-            log_info "Downloaded successfully"
-        else
-            log_error "Failed to download. Place ${BIN_NAME} binary in current directory and retry."
+        DOWNLOAD_URL="${DEFAULT_DOWNLOAD_BASE}/download/${RELEASE_VERSION}/${artifact}"
+    fi
+}
+
+stage_binary() {
+    local staged="$TMP_DIR/corade"
+    local local_src
+    local_src=$(select_binary_source)
+    if [ -n "$local_src" ]; then
+        log_step "Using local binary: ${local_src}"
+        cp "$local_src" "$staged"
+    else
+        resolve_download_url "corade-linux-${ARCH}"
+        log_step "Downloading binary: ${DOWNLOAD_URL}"
+        if ! curl -fsSL "$DOWNLOAD_URL" -o "$staged"; then
+            log_error "Failed to download binary from ${DOWNLOAD_URL}"
             exit 1
         fi
     fi
-
-    chmod +x "${INSTALL_DIR}/${BIN_NAME}"
-    log_info "${APP_NAME} installed to ${INSTALL_DIR}/${BIN_NAME}"
+    chmod +x "$staged"
+    if ! "$staged" -v >/dev/null 2>&1; then
+        log_error "Downloaded binary failed version check"
+        exit 1
+    fi
 }
 
-# ─── Systemd Template ────────────────────────────────────────────────
+stage_coradectl() {
+    local staged="$TMP_DIR/coradectl"
+    local local_src=""
+    if [ -n "$CLI_BINARY_SOURCE" ]; then
+        if [ ! -f "$CLI_BINARY_SOURCE" ]; then
+            log_error "coradectl binary source not found: $CLI_BINARY_SOURCE"
+            exit 1
+        fi
+        local_src="$CLI_BINARY_SOURCE"
+    elif [ -f "./coradectl" ]; then
+        local_src="./coradectl"
+    elif [ -f "./coradectl-linux-${ARCH}" ]; then
+        local_src="./coradectl-linux-${ARCH}"
+    fi
+    if [ -n "$local_src" ]; then
+        log_step "Using local coradectl binary: ${local_src}"
+        cp "$local_src" "$staged"
+    else
+        resolve_download_url "coradectl-linux-${ARCH}"
+        log_step "Downloading coradectl: ${DOWNLOAD_URL}"
+        if ! curl -fsSL "$DOWNLOAD_URL" -o "$staged"; then
+            log_error "Failed to download coradectl from ${DOWNLOAD_URL}"
+            exit 1
+        fi
+    fi
+    chmod +x "$staged"
+    if ! "$staged" version > /dev/null 2>&1; then
+        log_error "Downloaded coradectl failed version check"
+        exit 1
+    fi
+}
 
-install_systemd_template() {
-    if ! command -v systemctl >/dev/null 2>&1; then
-        return
+render_config() {
+    local init_args=(
+        config init
+        --mode "$MODE"
+        --panel-url "$PANEL_URL"
+        --kernel "${KERNEL_TYPE:-singbox}"
+        --health-port "${HEALTH_PORT:-0}"
+        --token "$TOKEN"
+        --version "$RELEASE_VERSION"
+        --output "$TMP_DIR/config.yml"
+        --credentials-out "$TMP_DIR/credentials.env"
+        --meta "$TMP_DIR/install-meta.json"
+        --install-root "$INSTALL_ROOT"
+    )
+    if [ -f "$CONFIG_FILE" ]; then
+        init_args+=(--config "$CONFIG_FILE")
+    fi
+    if [ -f "$CREDENTIALS_FILE" ]; then
+        init_args+=(--credentials-in "$CREDENTIALS_FILE")
+    fi
+    if [ "$MODE" = "machine" ]; then
+        init_args+=(--machine-id "$MACHINE_ID")
+    else
+        init_args+=(--node-id "$NODE_ID")
+        if [ -n "$NODE_TYPE" ]; then
+            init_args+=(--node-type "$NODE_TYPE")
+        fi
+    fi
+    if [ -n "$RUNTIME_GOMEMLIMIT" ]; then
+        init_args+=(--gomemlimit "$RUNTIME_GOMEMLIMIT")
+    fi
+    if [ -n "$RUNTIME_GOGC" ] && [ "$RUNTIME_GOGC" -gt 0 ] 2>/dev/null; then
+        init_args+=(--gogc "$RUNTIME_GOGC")
     fi
 
-    if [ -f "/etc/systemd/system/${SERVICE_TEMPLATE}" ]; then
-        return
-    fi
+    local output
+    output=$("$TMP_DIR/coradectl" "${init_args[@]}") || {
+        log_error "coradectl config init failed"
+        exit 1
+    }
 
-    log_step "Installing systemd service template..."
+    INSTANCE_ID=$(echo "$output" | grep '^INSTANCE_ID=' | cut -d= -f2-)
+    chmod 600 "$TMP_DIR/credentials.env"
+}
 
-    cat > "/etc/systemd/system/${SERVICE_TEMPLATE}" << 'UNIT'
+render_service() {
+    cat >"$TMP_DIR/${SERVICE_NAME}" <<EOF_UNIT
 [Unit]
-Description=Node Backend (node %i)
-After=network.target nss-lookup.target
+Description=Corade Node Backend
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/corade -c /etc/corade/%i/config.yml
+WorkingDirectory=${INSTALL_ROOT}
+EnvironmentFile=-${CREDENTIALS_FILE}
+ExecStart=${BINARY_PATH} -c ${CONFIG_FILE}
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576
+NoNewPrivileges=true
 StandardOutput=journal
 StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-UNIT
+EOF_UNIT
+}
 
+backup_existing_state() {
+    BACKUP_PATH="${BACKUP_DIR}/$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$BACKUP_PATH"
+    if [ -x "$BINARY_PATH" ]; then
+        cp "$BINARY_PATH" "$BACKUP_PATH/corade"
+    fi
+    if [ -x "$CLI_PATH" ]; then
+        cp "$CLI_PATH" "$BACKUP_PATH/coradectl"
+    fi
+    if [ -f "$CONFIG_FILE" ]; then
+        cp "$CONFIG_FILE" "$BACKUP_PATH/config.yml"
+    fi
+    if [ -f "$CREDENTIALS_FILE" ]; then
+        cp "$CREDENTIALS_FILE" "$BACKUP_PATH/credentials.env"
+    fi
+    if [ -f "$INSTALL_META" ]; then
+        cp "$INSTALL_META" "$BACKUP_PATH/install-meta.json"
+    fi
+    if [ -f "$SERVICE_PATH" ]; then
+        cp "$SERVICE_PATH" "$BACKUP_PATH/${SERVICE_NAME}"
+        SERVICE_EXISTED=1
+    else
+        SERVICE_EXISTED=0
+    fi
+}
+
+stop_existing_service() {
+    if [ -f "$SERVICE_PATH" ] || systemctl is-active "$SERVICE_NAME" >/dev/null 2>&1; then
+        systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+    fi
+}
+
+install_staged_files() {
+    stop_existing_service
+    install -m 755 "$TMP_DIR/corade" "$BINARY_PATH"
+    install -m 600 "$TMP_DIR/config.yml" "$CONFIG_FILE"
+    install -m 600 "$TMP_DIR/credentials.env" "$CREDENTIALS_FILE"
+    install -m 644 "$TMP_DIR/install-meta.json" "$INSTALL_META"
+    if [ -f "$0" ] && [ "$(realpath "$0")" != "$(realpath "$INSTALLER_COPY_PATH" 2>/dev/null || echo "$INSTALLER_COPY_PATH")" ]; then
+        install -m 755 "$0" "$INSTALLER_COPY_PATH"
+    fi
+    install -m 755 "$TMP_DIR/coradectl" "$CLI_PATH"
+    ln -sf "$CLI_PATH" /usr/bin/coradectl 2>/dev/null || true
+    install -m 644 "$TMP_DIR/${SERVICE_NAME}" "$SERVICE_PATH"
     systemctl daemon-reload
-    log_info "Systemd template installed: ${SERVICE_TEMPLATE}"
+    systemctl enable "$SERVICE_NAME" > /dev/null 2>&1
 }
 
-# ─── Migrate Legacy Config ───────────────────────────────────────────
-
-migrate_legacy_config() {
-    if [ -f "${CONFIG_DIR}/config.yml" ] && [ ! -d "${CONFIG_DIR}/config.yml" ]; then
-        local legacy_id
-        legacy_id=$(grep -E '^\s*node_id:\s*' "${CONFIG_DIR}/config.yml" 2>/dev/null | head -1 | sed 's/[^0-9]*//g')
-
-        if [ -z "$legacy_id" ]; then
-            legacy_id="default"
+wait_for_health() {
+    if ! systemctl is-active "$SERVICE_NAME" >/dev/null 2>&1; then
+        return 1
+    fi
+    if [ "$HEALTH_ENABLED" -eq 0 ]; then
+        return 0
+    fi
+    local attempt=0
+    local max_attempts=30
+    while [ "$attempt" -lt "$max_attempts" ]; do
+        if ! systemctl is-active "$SERVICE_NAME" >/dev/null 2>&1; then
+            return 1
         fi
-
-        if [ ! -d "${CONFIG_DIR}/${legacy_id}" ]; then
-            log_warn "Migrating legacy config to multi-node layout: node ${legacy_id}"
-            mkdir -p "${CONFIG_DIR}/${legacy_id}"
-            mv "${CONFIG_DIR}/config.yml" "${CONFIG_DIR}/${legacy_id}/config.yml"
-
-            if command -v systemctl >/dev/null 2>&1; then
-                systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
-                systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
-                rm -f /etc/systemd/system/xboard-node.service
-                rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
-
-                install_systemd_template
-                systemctl enable "${SERVICE_NAME}@${legacy_id}" 2>/dev/null || true
-                systemctl start "${SERVICE_NAME}@${legacy_id}" 2>/dev/null || true
-                log_info "Migrated service: ${SERVICE_NAME} → ${SERVICE_NAME}@${legacy_id}"
-            fi
+        if curl -fsS "http://127.0.0.1:${HEALTH_PORT}/healthz" >/dev/null 2>&1; then
+            return 0
         fi
-    fi
-}
-
-# ─── Interactive Prompts ──────────────────────────────────────────────
-
-prompt_missing_params() {
-    echo ""
-    log_step "=== Node Configuration ==="
-    echo ""
-
-    if [ -z "$PANEL_URL" ]; then
-        read -rp "  Panel URL (e.g. https://panel.example.com): " PANEL_URL
-    else
-        echo -e "  Panel URL: ${CYAN}${PANEL_URL}${NC}"
-    fi
-
-    if [ -z "$PANEL_TOKEN" ]; then
-        read -rp "  Server Token: " PANEL_TOKEN
-    else
-        echo -e "  Server Token: ${CYAN}${PANEL_TOKEN:0:8}***${NC}"
-    fi
-
-    if [ -z "$NODE_ID" ]; then
-        read -rp "  Node ID: " NODE_ID
-    else
-        echo -e "  Node ID: ${CYAN}${NODE_ID}${NC}"
-    fi
-
-    if [ -n "$NODE_TYPE" ]; then
-        echo -e "  Node Type: ${CYAN}${NODE_TYPE}${NC}"
-    fi
-
-    if [ -n "$KERNEL_TYPE" ] && [ "$KERNEL_TYPE" != "singbox" ]; then
-        echo -e "  Kernel: ${CYAN}${KERNEL_TYPE}${NC}"
-    else
-        echo ""
-        echo "  Kernel type:"
-        echo "    1) singbox (default, recommended)"
-        echo "    2) xray"
-        read -rp "  Choose [1/2]: " KERNEL_CHOICE
-        case "$KERNEL_CHOICE" in
-            2) KERNEL_TYPE="xray" ;;
-            *) KERNEL_TYPE="singbox" ;;
-        esac
-    fi
-
-    echo ""
-    validate_params
-}
-
-# ─── Node Operations ─────────────────────────────────────────────────
-
-write_node_config() {
-    local node_id="$1"
-    local node_dir="${CONFIG_DIR}/${node_id}"
-
-    mkdir -p "$node_dir"
-
-    local node_type_line=""
-    if [ -n "$NODE_TYPE" ]; then
-        node_type_line="  node_type: \"${NODE_TYPE}\""
-    fi
-
-    cat > "${node_dir}/config.yml" << EOF
-panel:
-  url: "${PANEL_URL}"
-  token: "${PANEL_TOKEN}"
-  node_id: ${node_id}
-${node_type_line}
-
-node:
-  push_interval: 0
-  pull_interval: 0
-
-kernel:
-  type: "${KERNEL_TYPE}"
-  config_dir: "${node_dir}"
-  log_level: "warn"
-
-log:
-  level: "info"
-  output: "stdout"
-EOF
-
-    log_info "Config written: ${node_dir}/config.yml"
-}
-
-add_node_native() {
-    local node_id="$1"
-
-    if [ -d "${CONFIG_DIR}/${node_id}" ]; then
-        log_error "Node ${node_id} already exists at ${CONFIG_DIR}/${node_id}/"
-        log_info "To reconfigure, first remove it: $0 remove ${node_id}"
-        exit 1
-    fi
-
-    write_node_config "$node_id"
-
-    if command -v systemctl >/dev/null 2>&1; then
-        install_systemd_template
-        systemctl enable "${SERVICE_NAME}@${node_id}"
-        systemctl start "${SERVICE_NAME}@${node_id}"
-        log_info "Service started: ${SERVICE_NAME}@${node_id}"
-    else
-        log_warn "No systemd found. Start manually:"
-        echo "  ${BIN_NAME} -c ${CONFIG_DIR}/${node_id}/config.yml"
-    fi
-}
-
-add_node_docker() {
-    local node_id="$1"
-
-    if [ -d "${CONFIG_DIR}/${node_id}" ]; then
-        log_error "Node ${node_id} already exists at ${CONFIG_DIR}/${node_id}/"
-        log_info "To reconfigure, first remove it: $0 remove ${node_id}"
-        exit 1
-    fi
-
-    write_node_config "$node_id"
-    regenerate_docker_compose
-    log_info "Docker compose updated: ${DOCKER_COMPOSE_FILE}"
-
-    if command -v docker >/dev/null 2>&1; then
-        if docker compose version >/dev/null 2>&1; then
-            COMPOSE_CMD="docker compose"
-        elif command -v docker-compose >/dev/null 2>&1; then
-            COMPOSE_CMD="docker-compose"
-        else
-            log_warn "docker compose not found. Start manually:"
-            echo "  cd ${CONFIG_DIR} && docker compose up -d"
-            return
-        fi
-        cd "${CONFIG_DIR}"
-        ${COMPOSE_CMD} up -d "node-${node_id}"
-        log_info "Container started: ${SERVICE_NAME}-${node_id}"
-    else
-        log_warn "Docker not installed. Install Docker first, then run:"
-        echo "  cd ${CONFIG_DIR} && docker compose up -d"
-    fi
-}
-
-regenerate_docker_compose() {
-    local nodes=()
-    for dir in "${CONFIG_DIR}"/*/; do
-        [ -f "${dir}config.yml" ] || continue
-        local nid
-        nid=$(basename "$dir")
-        nodes+=("$nid")
+        sleep 1
+        attempt=$((attempt + 1))
     done
+    return 1
+}
 
-    if [ ${#nodes[@]} -eq 0 ]; then
-        rm -f "${DOCKER_COMPOSE_FILE}"
+show_recent_logs() {
+    if command -v journalctl >/dev/null 2>&1; then
+        journalctl -u "$SERVICE_NAME" -n 30 --no-pager || true
+    fi
+}
+
+start_service() {
+    if systemctl is-enabled "$SERVICE_NAME" >/dev/null 2>&1; then
+        systemctl restart "$SERVICE_NAME"
+    else
+        systemctl start "$SERVICE_NAME"
+    fi
+    if ! wait_for_health; then
+        log_error "Service failed health check"
+        show_recent_logs
+        return 1
+    fi
+}
+
+perform_install() {
+    validate_install_request
+    detect_current_state
+    require_reconfigure_confirmation
+    TMP_DIR=$(mktemp -d)
+    ensure_dirs
+    stage_binary
+    stage_coradectl
+    render_config
+    render_service
+    backup_existing_state
+    install_staged_files
+    start_service
+
+    log_info "Installation succeeded"
+    log_info "Service: ${SERVICE_NAME}"
+    log_info "Config: ${CONFIG_FILE}"
+    log_info "Credentials: ${CREDENTIALS_FILE}"
+    if [ "$HEALTH_ENABLED" -eq 1 ]; then
+        log_info "Health: http://127.0.0.1:${HEALTH_PORT}/healthz"
+    fi
+    log_info "CLI: ${CLI_PATH}  (run '${CLI_PATH} list' if coradectl is not in PATH)"
+}
+
+perform_upgrade() {
+    detect_current_state
+    if [ "$CURRENT_STATE" = "fresh" ]; then
+        log_warn "No existing install found; falling back to install"
+        perform_install
         return
     fi
-
-    cat > "${DOCKER_COMPOSE_FILE}" << 'HEADER'
-# Auto-generated — do not edit manually.
-# Regenerated each time a node is added or removed.
-
-services:
-HEADER
-
-    for nid in "${nodes[@]}"; do
-        cat >> "${DOCKER_COMPOSE_FILE}" << EOF
-  node-${nid}:
-    image: ${DOCKER_IMAGE}
-    container_name: ${SERVICE_NAME}-${nid}
-    restart: always
-    network_mode: host
-    volumes:
-      - ./${nid}/config.yml:${CONFIG_DIR}/config.yml:ro
-      - ./${nid}:${CONFIG_DIR}/data
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-EOF
-    done
+    TMP_DIR=$(mktemp -d)
+    ensure_dirs
+    stage_binary
+    stage_coradectl
+    render_service
+    backup_existing_state
+    install -m 755 "$TMP_DIR/corade" "$BINARY_PATH"
+    install -m 755 "$TMP_DIR/coradectl" "$CLI_PATH"
+    ln -sf "$CLI_PATH" /usr/bin/coradectl 2>/dev/null || true
+    install -m 644 "$TMP_DIR/${SERVICE_NAME}" "$SERVICE_PATH"
+    systemctl daemon-reload
+    systemctl restart "$SERVICE_NAME"
+    if ! wait_for_health; then
+        log_error "Upgrade health check failed"
+        show_recent_logs
+        return 1
+    fi
+    log_info "Upgrade succeeded"
 }
 
-# ─── Deploy Node (unified entry) ─────────────────────────────────────
-
-deploy_node() {
-    if has_all_params; then
-        validate_params
-        log_info "Deploying node ${NODE_ID} (${KERNEL_TYPE}) → ${PANEL_URL}"
-    else
-        prompt_missing_params
+confirm_uninstall() {
+    if [ "$YES" -eq 1 ]; then
+        return
     fi
-
-    if [ "$DOCKER_MODE" -eq 1 ]; then
-        add_node_docker "$NODE_ID"
-    else
-        add_node_native "$NODE_ID"
+    echo
+    read -r -p "Proceed with uninstall? [y/N]: " answer
+    if ! [[ "$answer" =~ ^[Yy]$ ]]; then
+        log_warn "Uninstall cancelled"
+        exit 0
     fi
-
-    echo ""
-    echo -e "${GREEN}=== Node ${NODE_ID} Deployed ===${NC}"
-    echo ""
-
-    if [ "$DOCKER_MODE" -eq 1 ]; then
-        echo "  Manage:"
-        echo "    Logs:    docker logs -f ${SERVICE_NAME}-${NODE_ID}"
-        echo "    Stop:    cd ${CONFIG_DIR} && docker compose stop node-${NODE_ID}"
-        echo "    Restart: cd ${CONFIG_DIR} && docker compose restart node-${NODE_ID}"
-    else
-        echo "  Manage:"
-        echo "    Status:  systemctl status ${SERVICE_NAME}@${NODE_ID}"
-        echo "    Logs:    journalctl -u ${SERVICE_NAME}@${NODE_ID} -f"
-        echo "    Stop:    systemctl stop ${SERVICE_NAME}@${NODE_ID}"
-        echo "    Restart: systemctl restart ${SERVICE_NAME}@${NODE_ID}"
-    fi
-
-    echo ""
-    echo "  Config:  ${CONFIG_DIR}/${NODE_ID}/config.yml"
-    echo ""
 }
 
-# ─── Remove Node ──────────────────────────────────────────────────────
-
-remove_node() {
-    local node_id="$1"
-
-    if [ -z "$node_id" ]; then
-        log_error "Usage: $0 remove <node_id>"
-        exit 1
+perform_uninstall() {
+    confirm_uninstall
+    if [ -f "$SERVICE_PATH" ]; then
+        systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+        systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+        rm -f "$SERVICE_PATH"
+        systemctl daemon-reload || true
     fi
-
-    if [ ! -d "${CONFIG_DIR}/${node_id}" ]; then
-        log_error "Node ${node_id} not found"
-        exit 1
+    rm -f "$BINARY_PATH"
+    rm -f "$CLI_PATH"
+    rm -f /usr/bin/coradectl 2>/dev/null || true
+    if [ "$PURGE" -eq 1 ]; then
+        rm -rf "$INSTALL_ROOT"
+        log_info "Removed ${INSTALL_ROOT}"
+    else
+        rm -f "$INSTALL_META"
+        log_info "Config preserved under ${INSTALL_ROOT}"
     fi
-
-    log_step "Removing node ${node_id}..."
-
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl stop "${SERVICE_NAME}@${node_id}" 2>/dev/null || true
-        systemctl disable "${SERVICE_NAME}@${node_id}" 2>/dev/null || true
-        log_info "Systemd service stopped and disabled"
-    fi
-
-    if command -v docker >/dev/null 2>&1; then
-        docker rm -f "${SERVICE_NAME}-${node_id}" 2>/dev/null || true
-    fi
-
-    rm -rf "${CONFIG_DIR}/${node_id}"
-    log_info "Config removed: ${CONFIG_DIR}/${node_id}/"
-
-    regenerate_docker_compose
-    log_info "Node ${node_id} removed"
+    log_info "Uninstall complete"
 }
 
-# ─── List Nodes ───────────────────────────────────────────────────────
-
-list_nodes() {
-    echo ""
-    echo -e "${BOLD}  Deployed Nodes${NC}"
-    echo -e "  ────────────────────────────────────────────"
-
-    local found=0
-    for dir in "${CONFIG_DIR}"/*/; do
-        [ -f "${dir}config.yml" ] || continue
-        found=1
-
-        local nid
-        nid=$(basename "$dir")
-
-        local panel_url kernel_type
-        panel_url=$(grep -E '^\s*url:' "${dir}config.yml" 2>/dev/null | head -1 | sed 's/.*url:\s*"\?\([^"]*\)"\?.*/\1/')
-        kernel_type=$(grep -E '^\s*type:' "${dir}config.yml" 2>/dev/null | head -1 | sed 's/.*type:\s*"\?\([^"]*\)"\?.*/\1/')
-
-        local status="${RED}stopped${NC}"
-        if command -v systemctl >/dev/null 2>&1; then
-            if systemctl is-active "${SERVICE_NAME}@${nid}" >/dev/null 2>&1; then
-                status="${GREEN}running (systemd)${NC}"
-            fi
+perform_status() {
+    detect_current_state
+    echo
+    echo -e "${BOLD}Corade install status${NC}"
+    echo "  state:   ${CURRENT_STATE}"
+    if [ -f "$INSTALL_META" ]; then
+        echo "  meta:    ${INSTALL_META}"
+        if [ -x "$CLI_PATH" ]; then
+            "$CLI_PATH" list 2>/dev/null || true
+        else
+            # Simple key extraction from JSON (no Python needed)
+            local val
+            for key in config_mode version latest_instance_id instance_count updated_at; do
+                val=$(sed -n "s/.*\"${key}\": *\"\{0,1\}\([^\"]*\)\"\{0,1\}.*/\1/p" "$INSTALL_META" | head -1)
+                val="${val%,}"  # strip trailing comma from numeric JSON values
+                [ -n "$val" ] && echo "  ${key}: ${val}"
+            done
         fi
-        if command -v docker >/dev/null 2>&1; then
-            if docker inspect -f '{{.State.Running}}' "${SERVICE_NAME}-${nid}" 2>/dev/null | grep -q true; then
-                status="${GREEN}running (docker)${NC}"
-            fi
-        fi
-
-        printf "  ${BOLD}Node %-6s${NC}  kernel=%-8s  panel=%s\n" "$nid" "${kernel_type:-singbox}" "${panel_url:-unknown}"
-        echo -e "              status=${status}"
-        echo ""
-    done
-
-    if [ "$found" -eq 0 ]; then
-        echo "  No nodes deployed yet."
-        echo ""
-        echo "  Deploy your first node:"
-        echo "    $0 -a https://panel.example.com -t TOKEN -n 1"
-        echo "    $0 -a https://panel.example.com -t TOKEN -n 1 --docker"
     fi
-    echo ""
-}
-
-# ─── Update / Uninstall ──────────────────────────────────────────────
-
-update_binary() {
-    log_step "Updating ${APP_NAME} binary..."
-
-    detect_arch
-
-    local url="${RELEASE_BASE_URL}/${BIN_NAME}-linux-${ARCH}"
-    local tmp="/tmp/${BIN_NAME}-update"
-
-    if wget -q "$url" -O "$tmp" 2>/dev/null || curl -fsSL "$url" -o "$tmp" 2>/dev/null; then
-        chmod +x "$tmp"
-        mv "$tmp" "${INSTALL_DIR}/${BIN_NAME}"
-        log_info "Binary updated"
-    else
-        log_error "Failed to download update"
-        rm -f "$tmp"
-        exit 1
-    fi
-
-    if command -v systemctl >/dev/null 2>&1; then
-        for dir in "${CONFIG_DIR}"/*/; do
-            [ -f "${dir}config.yml" ] || continue
-            local nid
-            nid=$(basename "$dir")
-            if systemctl is-active "${SERVICE_NAME}@${nid}" >/dev/null 2>&1; then
-                systemctl restart "${SERVICE_NAME}@${nid}"
-                log_info "Restarted: ${SERVICE_NAME}@${nid}"
-            fi
-        done
-    fi
-
-    if [ -f "${DOCKER_COMPOSE_FILE}" ] && command -v docker >/dev/null 2>&1; then
-        log_info "For Docker nodes, pull the latest image and restart:"
-        echo "  cd ${CONFIG_DIR} && docker compose pull && docker compose up -d"
+    if [ -f "$SERVICE_PATH" ]; then
+        echo "  service: ${SERVICE_NAME}"
+        systemctl status "$SERVICE_NAME" --no-pager || true
     fi
 }
-
-do_uninstall() {
-    log_step "Uninstalling ${APP_NAME}..."
-
-    if command -v systemctl >/dev/null 2>&1; then
-        for dir in "${CONFIG_DIR}"/*/; do
-            [ -f "${dir}config.yml" ] || continue
-            local nid
-            nid=$(basename "$dir")
-            systemctl stop "${SERVICE_NAME}@${nid}" 2>/dev/null || true
-            systemctl disable "${SERVICE_NAME}@${nid}" 2>/dev/null || true
-        done
-        systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
-        systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
-        rm -f /etc/systemd/system/xboard-node.service
-        rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
-        rm -f /etc/systemd/system/xboard-node@.service
-        rm -f "/etc/systemd/system/${SERVICE_TEMPLATE}"
-        systemctl daemon-reload
-    fi
-
-    if command -v docker >/dev/null 2>&1; then
-        for dir in "${CONFIG_DIR}"/*/; do
-            [ -f "${dir}config.yml" ] || continue
-            local nid
-            nid=$(basename "$dir")
-            docker rm -f "${SERVICE_NAME}-${nid}" 2>/dev/null || true
-        done
-    fi
-
-    rm -f "${INSTALL_DIR}/${BIN_NAME}"
-    log_info "Binary removed"
-
-    echo ""
-    read -rp "  Delete all configs? (${CONFIG_DIR}) [y/N]: " DELETE_ALL
-    if [[ "$DELETE_ALL" =~ ^[Yy]$ ]]; then
-        rm -rf "${CONFIG_DIR}"
-        log_info "All configs removed"
-    else
-        log_info "Configs preserved at ${CONFIG_DIR}/"
-    fi
-
-    log_info "${APP_NAME} uninstalled"
-}
-
-# ─── Print Help ───────────────────────────────────────────────────────
-
-print_help() {
-    cat << 'HELP'
-
-  Node Deploy Script
-
-  DEPLOY A NODE (one command, repeat for each node):
-
-    install.sh -a <url> -t <token> -n <node_id> [-T <node_type>] [-k singbox|xray] [--docker]
-
-  OPTIONS:
-    -a, --api        Panel URL          (e.g. https://panel.example.com)
-    -t, --token      Server Token       (from panel settings)
-    -n, --node-id    Node ID            (positive integer)
-    -T, --node-type  Node type          (optional, auto-detected from panel)
-    -k, --kernel     Kernel type        (singbox or xray, default: singbox)
-    --docker         Use Docker instead of systemd
-
-  EXAMPLES:
-
-    # Deploy node 1 (sing-box, systemd):
-    bash install.sh -a https://panel.example.com -t mytoken123 -n 1
-
-    # Deploy node 2 (xray, systemd):
-    bash install.sh -a https://panel.example.com -t mytoken123 -n 2 -k xray
-
-    # Deploy node 3 with explicit type (Docker):
-    bash install.sh -a https://panel.example.com -t mytoken123 -n 3 -T shadowsocks --docker
-
-    # Interactive mode (will prompt for all params):
-    bash install.sh
-
-  MANAGEMENT:
-
-    bash install.sh list               List all deployed nodes
-    bash install.sh remove <node_id>   Remove a node
-    bash install.sh update             Update binary + restart all nodes
-    bash install.sh uninstall          Remove everything
-
-  DOCKER (env-var mode, no config file needed):
-
-    docker run -d --restart=always --network=host \
-      -e apiHost=https://panel.example.com \
-      -e apiKey=YOUR_TOKEN \
-      -e nodeID=1 \
-      ${DOCKER_IMAGE}
-
-HELP
-}
-
-# ─── Main ─────────────────────────────────────────────────────────────
 
 main() {
     parse_args "$@"
+    case "$ACTION" in
+        help)
+            usage
+            exit 0
+            ;;
+        status)
+            ensure_systemd
+            perform_status
+            exit 0
+            ;;
+    esac
 
-    case "$SUBCOMMAND" in
-        remove)
-            check_root
-            remove_node "$NODE_ID"
+    check_root
+    detect_arch
+    detect_os
+    ensure_systemd
+    install_dependencies
+
+    case "$ACTION" in
+        install)
+            perform_install
             ;;
-        list)
-            list_nodes
-            ;;
-        update)
-            check_root
-            update_binary
+        upgrade)
+            perform_upgrade
             ;;
         uninstall)
-            check_root
-            do_uninstall
-            ;;
-        help|--help|-h)
-            print_help
-            ;;
-        add|"")
-            check_root
-            detect_arch
-            detect_os
-            install_deps
-            mkdir -p "$CONFIG_DIR"
-            migrate_legacy_config
-
-            if [ "$DOCKER_MODE" -eq 0 ]; then
-                install_binary
-                install_systemd_template
-            fi
-
-            deploy_node
+            perform_uninstall
             ;;
         *)
-            log_error "Unknown command: $SUBCOMMAND"
-            print_help
+            log_error "Unknown action: $ACTION"
+            usage
             exit 1
             ;;
     esac
