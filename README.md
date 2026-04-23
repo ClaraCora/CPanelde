@@ -47,6 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh | \
 Run `coradectl` after installation for help. Common commands:
 
 ```bash
+sudo coradectl upgrade                  # update Corade on the VPS
 coradectl list                          # list all instances
 coradectl status                        # running status
 coradectl bind add-node --panel URL --token TOKEN --node-id 1
