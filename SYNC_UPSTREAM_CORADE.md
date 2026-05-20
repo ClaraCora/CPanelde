@@ -28,8 +28,8 @@
 - CLI 路径：[`/usr/local/bin/coradectl`](cmd/xbctl/main.go:29)
 
 ### 3. 远程资源
-- Release 下载源：[`https://github.com/ClaraCora/Corade/releases`](cmd/xbctl/main.go:33)
-- 安装脚本远程地址：[`https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh`](README.md:38)
+- Release 下载源：[`https://github.com/ClaraCora/coradem/releases`](cmd/xbctl/main.go:33)
+- 安装脚本远程地址：[`https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh`](README.md:38)
 - Docker 镜像：[`ghcr.io/claracora/corade`](.github/workflows/ci.yml:101)
 
 ### 4. 运行时外显要求
@@ -167,8 +167,8 @@ git checkout --theirs <file>
 | `/usr/local/bin/xbctl` | `/usr/local/bin/coradectl` |
 | `xboard-node.service` | `corade.service` |
 | `ghcr.io/cedar2025/xboard-node` | `ghcr.io/claracora/corade` |
-| `https://github.com/cedar2025/xboard-node/releases` | `https://github.com/ClaraCora/Corade/releases` |
-| `https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh` | `https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh` |
+| `https://github.com/cedar2025/xboard-node/releases` | `https://github.com/ClaraCora/coradem/releases` |
+| `https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh` | `https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh` |
 
 ### 5.2 需要重点人工复核的文件
 #### [`install.sh`](install.sh)
@@ -320,7 +320,7 @@ git checkout --theirs .github/workflows/ci.yml Makefile README.md cmd/xboard-nod
 - `/usr/local/bin/xbctl -> /usr/local/bin/coradectl`
 - `xboard-node.service -> corade.service`
 - `ghcr.io/cedar2025/xboard-node -> ghcr.io/claracora/corade`
-- `https://github.com/cedar2025/xboard-node/releases -> https://github.com/ClaraCora/Corade/releases`
+- `https://github.com/cedar2025/xboard-node/releases -> https://github.com/ClaraCora/coradem/releases`
 
 7. 再检查残留：
 ```bash

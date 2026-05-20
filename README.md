@@ -25,8 +25,8 @@ docker run -d --restart=always --network=host \
 ### Docker Compose
 
 ```bash
-git clone -b compose --depth 1 https://github.com/ClaraCora/Corade.git
-cd Corade
+git clone -b compose --depth 1 https://github.com/ClaraCora/coradem.git
+cd coradem
 vim config/config.yml   # set panel.url / token / node_id
 docker compose up -d
 ```
@@ -35,12 +35,27 @@ docker compose up -d
 
 ```bash
 # Node mode
-curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh | \
   sudo bash -s -- --mode node --panel https://panel.example.com --token TOKEN --node-id 1
 
 # Machine mode
-curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh | \
   sudo bash -s -- --mode machine --panel https://panel.example.com --token TOKEN --machine-id 1
+```
+
+### Upgrade / migrate from the old repository
+
+If a VPS was installed from the old repository, use the new installer URL once. It preserves `/etc/corade/config.yml`, replaces `corade` / `coradectl`, restarts `corade.service`, and switches future upgrades to this repository.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh | sudo bash -s -- upgrade
+```
+
+After that, regular upgrades can use:
+
+```bash
+sudo coradectl upgrade
+```
 
 ## coradectl
 

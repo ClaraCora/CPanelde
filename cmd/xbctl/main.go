@@ -30,7 +30,7 @@ const (
 	serviceName            = "corade.service"
 	serviceFilePath        = "/etc/systemd/system/corade.service"
 	defaultInstallRoot     = "/etc/corade"
-	downloadBase           = "https://github.com/ClaraCora/Corade/releases"
+	downloadBase           = "https://github.com/ClaraCora/coradem/releases"
 )
 
 var (

@@ -18,6 +18,11 @@ Corade 是一个兼容 Xboard API 的自有品牌节点后端，适用于希望�
 | 上报能力 | 流量、在线/活跃 IP、CPU、内存、Swap、磁盘、连接数 |
 | 部署方式 | 单 Go 服务、Docker、Docker Compose、systemd |
 
+## 仓库地址
+
+- GitHub：[`https://github.com/ClaraCora/coradem`](https://github.com/ClaraCora/coradem)
+- 安装脚本：[`https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh`](https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh)
+
 ## 快速开始
 
 ### 一条命令安装
@@ -25,13 +30,13 @@ Corade 是一个兼容 Xboard API 的自有品牌节点后端，适用于希望�
 使用 [`install.sh`](install.sh) 一键安装节点：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1
 ```
 
 如果系统没有 [`curl`](README-cn.md)，可以使用 [`wget`](README-cn.md)：
 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1
+bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1
 ```
 
 常用参数说明：
@@ -44,7 +49,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.
 指定内核安装示例：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1 -k xray
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 1 -k xray
 ```
 
 ### 在同一台 VPS 再添加第二个节点
@@ -52,7 +57,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install
 只需要再次执行一次 [`install.sh`](install.sh)，并传入新的 [`node_id`](config.yml.example:61)：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 2
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh) -a https://panel.example.com -t YOUR_TOKEN -n 2
 ```
 
 例如：
@@ -66,13 +71,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/install
 如果 SS2022 日志里出现 [`bad timestamp`](README-cn.md:232)，先执行时间同步脚本：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/Corade/dev/time-sync-check.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/coradem/main/time-sync-check.sh)
 ```
 
 如果系统没有 [`curl`](README-cn.md)：
 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/Corade/dev/time-sync-check.sh)
+bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/coradem/main/time-sync-check.sh)
 ```
 
 ## 安装方式
@@ -187,6 +192,26 @@ ss -lntp | grep corade
 ### 更新所有节点
 
 更新 VPS 上的 Corade：
+
+```bash
+sudo coradectl upgrade
+```
+
+### 从旧仓库迁移到新仓库
+
+如果 VPS 之前是从旧仓库安装的，旧版 [`coradectl`](README-cn.md:201) 可能仍会去旧 Release 下载。请先执行一次新仓库安装脚本的升级动作：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh) upgrade
+```
+
+如果系统没有 [`curl`](README-cn.md:31)，使用：
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh) upgrade
+```
+
+该命令会保留现有 [`/etc/corade/config.yml`](README-cn.md:89)，替换 [`corade`](README-cn.md:88) / [`coradectl`](README-cn.md:201)，并重启 [`corade.service`](README-cn.md:90)。完成后，以后继续使用：
 
 ```bash
 sudo coradectl upgrade

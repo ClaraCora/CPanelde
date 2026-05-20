@@ -27,7 +27,7 @@ DEFAULT_ACTION="install"
 DEFAULT_RELEASE_VERSION="latest"
 DEFAULT_LOG_LEVEL="info"
 DEFAULT_KERNEL_LOG_LEVEL="warn"
-DEFAULT_DOWNLOAD_BASE="https://github.com/ClaraCora/Corade/releases"
+DEFAULT_DOWNLOAD_BASE="https://github.com/ClaraCora/coradem/releases"
 
 ACTION="${DEFAULT_ACTION}"
 MODE=""
