@@ -353,7 +353,7 @@ func (rc *RootConfig) NormalizeInstances() ([]*Config, error) {
 
 // Load reads configuration from a YAML file, then applies environment variable
 // overrides. If the config file does not exist, a config is built entirely from
-// environment variables (useful for Docker deployment with -e flags).
+// environment variables (useful for non-file deployment environments).
 func Load(path string) (*Config, error) {
 	cfg := &Config{}
 

@@ -16,7 +16,7 @@ Corade 是一个兼容 Xboard API 的自有品牌节点后端，适用于希望�
 | 用户控制 | 单用户限速、设备数限制、在线 IP 跟踪 |
 | 运行能力 | 热增删改用户 |
 | 上报能力 | 流量、在线/活跃 IP、CPU、内存、Swap、磁盘、连接数 |
-| 部署方式 | 单 Go 服务、Docker、Docker Compose、systemd |
+| 部署方式 | 单 Go 服务、systemd |
 
 ## 仓库地址
 
@@ -93,17 +93,6 @@ bash install.sh -a https://panel.example.com -t YOUR_TOKEN -n 1
 - 二进制文件：`corade`
 - 配置目录：`/etc/corade`
 - systemd 服务：`corade.service`
-- Docker 镜像：`ghcr.io/claracora/corade:latest`
-
-### Docker 安装
-
-```bash
-docker run -d --restart=always --network=host \
-  -e apiHost=https://panel.com \
-  -e apiKey=TOKEN \
-  -e nodeID=1 \
-  ghcr.io/claracora/corade:latest
-```
 
 ### 原生 / systemd 安装
 

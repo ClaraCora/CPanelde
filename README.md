@@ -14,14 +14,6 @@ Corade is a self-branded node backend compatible with the Xboard API. It support
 
 ## Install
 
-### Docker
-
-```bash
-docker run -d --restart=always --network=host \
-  -e apiHost=https://panel.com -e apiKey=TOKEN -e nodeID=1 \
-  ghcr.io/claracora/corade:latest
-```
-
 ### Build from source
 
 ```bash

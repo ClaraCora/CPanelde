@@ -15,7 +15,7 @@
 
 ### 1. 品牌命名
 - 主项目名使用 [`Corade`](README.md:1)
-- 主二进制名使用 [`corade`](Dockerfile:24)
+- 主二进制名使用 [`corade`](Makefile:9)
 - 管理 CLI 使用 [`coradectl`](cmd/xbctl/main.go:29)
 - systemd 服务名使用 [`corade.service`](cmd/xbctl/main.go:30)
 
@@ -30,7 +30,6 @@
 ### 3. 远程资源
 - Release 下载源：[`https://github.com/ClaraCora/coradem/releases`](cmd/xbctl/main.go:33)
 - 安装脚本远程地址：[`https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh`](README.md:38)
-- Docker 镜像：[`ghcr.io/claracora/corade`](.github/workflows/ci.yml:101)
 
 ### 4. 运行时外显要求
 尽量避免安装后在 VPS 终端直接看到上游项目名称：
@@ -166,7 +165,6 @@ git checkout --theirs <file>
 | `/usr/local/bin/xboard-node` | `/usr/local/bin/corade` |
 | `/usr/local/bin/xbctl` | `/usr/local/bin/coradectl` |
 | `xboard-node.service` | `corade.service` |
-| `ghcr.io/cedar2025/xboard-node` | `ghcr.io/claracora/corade` |
 | `https://github.com/ClaraCora/coradem/releases` | `https://github.com/ClaraCora/coradem/releases` |
 | `https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh` | `https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh` |
 
@@ -196,7 +194,6 @@ git checkout --theirs <file>
 必须检查：
 - 标题是否为 [`# Corade`](README.md:1)
 - 安装命令是否为 Corade 仓库地址
-- Docker 镜像是否为 `ghcr.io/claracora/corade`
 - CLI 章节是否为 [`coradectl`](README.md:45)
 - 不再保留上游项目链接与命令名
 
@@ -207,13 +204,12 @@ git checkout --theirs <file>
 必须检查：
 - 产物名：`corade` / `coradectl`
 - Linux 构建产物：`corade-linux-*` / `coradectl-linux-*`
-- clean/install/docker 目标中的名称是否一致
+- clean/install 目标中的名称是否一致
 
 #### [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 必须检查：
 - artifact 名称
 - release 上传文件名
-- Docker 推送镜像名
 
 ---
 
@@ -232,7 +228,7 @@ git diff --name-only --diff-filter=U
 ```bash
 grep -RIn 'xboard-node\|xbctl\|cedar2025/xboard-node' \
   install.sh README.md README-cn.md config.yml.example \
-  Makefile Dockerfile .github/workflows/ci.yml \
+  Makefile .github/workflows/ci.yml \
   cmd/xbctl/main.go cmd/corade/main.go \
   internal/config/config.go internal/config/config_test.go internal/cert/cert.go \
   docs-custom-routes.md docs-custom-outbounds.md || true
@@ -319,12 +315,11 @@ git checkout --theirs .github/workflows/ci.yml Makefile README.md cmd/corade/mai
 - `/usr/local/bin/xboard-node -> /usr/local/bin/corade`
 - `/usr/local/bin/xbctl -> /usr/local/bin/coradectl`
 - `xboard-node.service -> corade.service`
-- `ghcr.io/cedar2025/xboard-node -> ghcr.io/claracora/corade`
 - `https://github.com/ClaraCora/coradem/releases -> https://github.com/ClaraCora/coradem/releases`
 
 7. 再检查残留：
 ```bash
-grep -RIn 'xboard-node\|xbctl\|cedar2025/xboard-node' install.sh README.md README-cn.md config.yml.example Makefile Dockerfile .github/workflows/ci.yml cmd/xbctl/main.go cmd/corade/main.go internal/config/config.go internal/config/config_test.go internal/cert/cert.go docs-custom-routes.md docs-custom-outbounds.md || true
+grep -RIn 'xboard-node\|xbctl\|cedar2025/xboard-node' install.sh README.md README-cn.md config.yml.example Makefile .github/workflows/ci.yml cmd/xbctl/main.go cmd/corade/main.go internal/config/config.go internal/config/config_test.go internal/cert/cert.go docs-custom-routes.md docs-custom-outbounds.md || true
 ```
 
 8. 测试：
