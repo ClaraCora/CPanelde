@@ -117,6 +117,74 @@ func TestNodeConfig_UnmarshalFullPanelResponse(t *testing.T) {
 	}
 }
 
+func TestNodeConfig_UnmarshalCustomSettingsSnakeCase(t *testing.T) {
+	input := `{
+		"protocol": "shadowsocks",
+		"server_port": 111,
+		"custom_outbounds": [{"tag":"warp","protocol":"wireguard","settings":{"server":"1.1.1.1","server_port":2408}}],
+		"custom_routes": [{"domain":["keyword:raw"],"outbound":"warp"}],
+		"custom_route_rules": [{"name":"r1","match":{"domain_suffixes":["example.com"],"ip_cidrs":["1.1.1.0/24"]},"action":{"type":"route","target":"warp"}}]
+	}`
+	var nc NodeConfig
+	if err := json.Unmarshal([]byte(input), &nc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(nc.CustomOutbounds) != 1 || nc.CustomOutbounds[0].Tag != "warp" {
+		t.Fatalf("custom_outbounds not decoded: %#v", nc.CustomOutbounds)
+	}
+	if len(nc.CustomRoutes) != 1 || nc.CustomRoutes[0]["outbound"] != "warp" {
+		t.Fatalf("custom_routes not decoded: %#v", nc.CustomRoutes)
+	}
+	if len(nc.CustomRouteRules) != 1 || nc.CustomRouteRules[0].Match.DomainSuffixes[0] != "example.com" || nc.CustomRouteRules[0].Match.IPCIDRs[0] != "1.1.1.0/24" {
+		t.Fatalf("custom_route_rules not decoded: %#v", nc.CustomRouteRules)
+	}
+}
+
+func TestNodeConfig_UnmarshalCustomSettingsCamelCase(t *testing.T) {
+	input := `{
+		"protocol": "shadowsocks",
+		"server_port": 111,
+		"customOutbounds": [{"tag":"proxy","protocol":"socks","proxyTag":"warp","settings":{"server":"2.2.2.2","server_port":1080}}],
+		"customRoutes": [{"domain":["keyword:raw"],"outbound":"proxy"}],
+		"customRouteRules": [{"name":"r1","match":{"domainSuffixes":["example.com"],"ipCidrs":["1.1.1.0/24"],"sourceCidrs":["10.0.0.0/8"],"sourcePorts":["1000-2000"]},"action":{"type":"route","target":"proxy"}}]
+	}`
+	var nc NodeConfig
+	if err := json.Unmarshal([]byte(input), &nc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(nc.CustomOutbounds) != 1 || nc.CustomOutbounds[0].ProxyTag != "warp" {
+		t.Fatalf("camel customOutbounds not decoded: %#v", nc.CustomOutbounds)
+	}
+	if len(nc.CustomRoutes) != 1 || nc.CustomRoutes[0]["outbound"] != "proxy" {
+		t.Fatalf("camel customRoutes not decoded: %#v", nc.CustomRoutes)
+	}
+	rule := nc.CustomRouteRules[0]
+	if rule.Match.DomainSuffixes[0] != "example.com" || rule.Match.IPCIDRs[0] != "1.1.1.0/24" || rule.Match.SourceCIDRs[0] != "10.0.0.0/8" || rule.Match.SourcePorts[0] != "1000-2000" {
+		t.Fatalf("camel customRouteRules not decoded: %#v", nc.CustomRouteRules)
+	}
+}
+
+func TestNodeConfig_UnmarshalCustomSettingsFromAdvancedJSONString(t *testing.T) {
+	input := `{
+		"protocol": "shadowsocks",
+		"server_port": 111,
+		"advanced_settings": "{\"customOutbounds\":[{\"tag\":\"warp\",\"protocol\":\"wireguard\",\"settings\":{\"server\":\"1.1.1.1\",\"server_port\":2408}}],\"customRoutes\":[{\"domain\":[\"keyword:raw\"],\"outbound\":\"warp\"}],\"customRouteRules\":[{\"match\":{\"domainSuffixes\":[\"example.com\"]},\"action\":{\"type\":\"route\",\"target\":\"warp\"}}]}"
+	}`
+	var nc NodeConfig
+	if err := json.Unmarshal([]byte(input), &nc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(nc.CustomOutbounds) != 1 || nc.CustomOutbounds[0].Tag != "warp" {
+		t.Fatalf("advanced_settings customOutbounds not decoded: %#v", nc.CustomOutbounds)
+	}
+	if len(nc.CustomRoutes) != 1 || nc.CustomRoutes[0]["outbound"] != "warp" {
+		t.Fatalf("advanced_settings customRoutes not decoded: %#v", nc.CustomRoutes)
+	}
+	if len(nc.CustomRouteRules) != 1 || nc.CustomRouteRules[0].Match.DomainSuffixes[0] != "example.com" {
+		t.Fatalf("advanced_settings customRouteRules not decoded: %#v", nc.CustomRouteRules)
+	}
+}
+
 func TestUsersResponse_Unmarshal(t *testing.T) {
 	input := `{
 		"users": [

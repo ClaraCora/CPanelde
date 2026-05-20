@@ -50,6 +50,77 @@ func (h *HandshakeResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func firstRaw(raw map[string]json.RawMessage, keys ...string) json.RawMessage {
+	for _, key := range keys {
+		if v, ok := raw[key]; ok && len(v) > 0 && string(v) != "null" {
+			return v
+		}
+	}
+	return nil
+}
+
+func unmarshalJSONOrString(data json.RawMessage, dst any) error {
+	if len(data) == 0 || string(data) == "null" || string(data) == `""` {
+		return nil
+	}
+	if err := json.Unmarshal(data, dst); err == nil {
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return json.Unmarshal([]byte(s), dst)
+}
+
+func mergeAdvancedSettings(raw map[string]json.RawMessage, nc *NodeConfig) error {
+	var advanced map[string]json.RawMessage
+	if v := firstRaw(raw, "advanced_settings", "advancedSettings", "advanced", "settings"); len(v) > 0 {
+		if err := unmarshalJSONOrString(v, &advanced); err != nil {
+			return fmt.Errorf("advanced settings: %w", err)
+		}
+	}
+	if advanced == nil {
+		advanced = raw
+	}
+
+	if v := firstRaw(raw, "custom_outbounds", "customOutbounds"); len(v) == 0 {
+		if v = firstRaw(advanced, "custom_outbounds", "customOutbounds"); len(v) > 0 {
+			if err := unmarshalJSONOrString(v, &nc.CustomOutbounds); err != nil {
+				return fmt.Errorf("custom_outbounds: %w", err)
+			}
+		}
+	} else if err := unmarshalJSONOrString(v, &nc.CustomOutbounds); err != nil {
+		return fmt.Errorf("custom_outbounds: %w", err)
+	}
+
+	if v := firstRaw(raw, "custom_routes", "customRoutes"); len(v) == 0 {
+		if v = firstRaw(advanced, "custom_routes", "customRoutes"); len(v) > 0 {
+			if err := unmarshalJSONOrString(v, &nc.CustomRoutes); err != nil {
+				return fmt.Errorf("custom_routes: %w", err)
+			}
+		}
+	} else if err := unmarshalJSONOrString(v, &nc.CustomRoutes); err != nil {
+		return fmt.Errorf("custom_routes: %w", err)
+	}
+
+	if v := firstRaw(raw, "custom_route_rules", "customRouteRules"); len(v) == 0 {
+		if v = firstRaw(advanced, "custom_route_rules", "customRouteRules"); len(v) > 0 {
+			if err := unmarshalJSONOrString(v, &nc.CustomRouteRules); err != nil {
+				return fmt.Errorf("custom_route_rules: %w", err)
+			}
+		}
+	} else if err := unmarshalJSONOrString(v, &nc.CustomRouteRules); err != nil {
+		return fmt.Errorf("custom_route_rules: %w", err)
+	}
+
+	return nil
+}
+
 // WSConfig holds WebSocket connection settings from the panel
 type WSConfig struct {
 	Enabled bool   `json:"enabled"`
@@ -71,8 +142,8 @@ type MachineNode struct {
 
 // MachineNodesResponse is the response from GET /api/v2/server/machine/nodes.
 type MachineNodesResponse struct {
-	Nodes      []MachineNode      `json:"nodes"`
-	BaseConfig MachineBaseConfig  `json:"base_config"`
+	Nodes      []MachineNode     `json:"nodes"`
+	BaseConfig MachineBaseConfig `json:"base_config"`
 }
 
 // MachineBaseConfig holds polling intervals for machine mode.
@@ -143,6 +214,20 @@ type NodeConfig struct {
 
 	// Proxy Protocol (supports both top-level and networkSettings for compatibility)
 	AcceptProxyProtocol bool `json:"accept_proxy_protocol,omitempty"`
+}
+
+func (nc *NodeConfig) UnmarshalJSON(data []byte) error {
+	type Alias NodeConfig
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var alias Alias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*nc = NodeConfig(alias)
+	return mergeAdvancedSettings(raw, nc)
 }
 
 // GetProxyProtocol returns true if AcceptProxyProtocol is set either at node level
@@ -217,6 +302,22 @@ type OutboundConfig struct {
 	ProxyTag string         `json:"proxy_tag,omitempty"` // Chain proxy: next outbound tag
 }
 
+func (o *OutboundConfig) UnmarshalJSON(data []byte) error {
+	type Alias OutboundConfig
+	var raw struct {
+		Alias
+		ProxyTagCamel string `json:"proxyTag"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*o = OutboundConfig(raw.Alias)
+	if o.ProxyTag == "" {
+		o.ProxyTag = raw.ProxyTagCamel
+	}
+	return nil
+}
+
 type BaseConfig struct {
 	PushInterval int `json:"push_interval"`
 	PullInterval int `json:"pull_interval"`
@@ -244,6 +345,34 @@ type RouteMatch struct {
 	Networks       []string `json:"networks,omitempty"`
 	SourceCIDRs    []string `json:"source_cidrs,omitempty"`
 	SourcePorts    []string `json:"source_ports,omitempty"`
+}
+
+func (m *RouteMatch) UnmarshalJSON(data []byte) error {
+	type Alias RouteMatch
+	var raw struct {
+		Alias
+		DomainSuffixesCamel []string `json:"domainSuffixes"`
+		IPCIDRsCamel        []string `json:"ipCidrs"`
+		SourceCIDRsCamel    []string `json:"sourceCidrs"`
+		SourcePortsCamel    []string `json:"sourcePorts"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*m = RouteMatch(raw.Alias)
+	if len(m.DomainSuffixes) == 0 {
+		m.DomainSuffixes = raw.DomainSuffixesCamel
+	}
+	if len(m.IPCIDRs) == 0 {
+		m.IPCIDRs = raw.IPCIDRsCamel
+	}
+	if len(m.SourceCIDRs) == 0 {
+		m.SourceCIDRs = raw.SourceCIDRsCamel
+	}
+	if len(m.SourcePorts) == 0 {
+		m.SourcePorts = raw.SourcePortsCamel
+	}
+	return nil
 }
 
 type RouteAction struct {

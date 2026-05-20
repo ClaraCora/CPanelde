@@ -169,6 +169,18 @@ func (c *Client) Report(traffic map[int][2]int64, alive map[int][]string, online
 	return c.postJSON("/api/v2/server/report", payload)
 }
 
+func rawMessagesFromMap(input map[string]interface{}) (map[string]json.RawMessage, error) {
+	out := make(map[string]json.RawMessage, len(input))
+	for key, value := range input {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("marshal field %q: %w", key, err)
+		}
+		out[key] = data
+	}
+	return out, nil
+}
+
 // decodeWeakRaw decodes an interface (from JSON map) into a struct using weak type conversion.
 func decodeWeakRaw(input map[string]interface{}, output interface{}) error {
 	config := &mapstructure.DecoderConfig{
@@ -240,6 +252,16 @@ func (c *Client) GetConfig() (*NodeConfig, error) {
 	// Use mapstructure for weak type conversion (string -> int, bool -> string, etc.)
 	if err := decodeWeakRaw(raw, &cfg); err != nil {
 		return nil, fmt.Errorf("weak decode config: %w", err)
+	}
+	// mapstructure does not call custom JSON unmarshaler methods and does not map
+	// camelCase extension keys to snake_case json tags. Re-apply the advanced
+	// settings parser so Xboard advanced settings work for REST polling too.
+	rawMessages, err := rawMessagesFromMap(raw)
+	if err != nil {
+		return nil, fmt.Errorf("prepare advanced settings: %w", err)
+	}
+	if err := mergeAdvancedSettings(rawMessages, &cfg); err != nil {
+		return nil, fmt.Errorf("decode advanced settings: %w", err)
 	}
 
 	// Basic validation
