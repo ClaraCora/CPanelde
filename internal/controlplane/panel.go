@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cedar2025/xboard-node/internal/config"
-	"github.com/cedar2025/xboard-node/internal/model"
-	"github.com/cedar2025/xboard-node/internal/nlog"
-	"github.com/cedar2025/xboard-node/internal/panel"
+	"github.com/ClaraCora/coradem/internal/config"
+	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/coradem/internal/nlog"
+	"github.com/ClaraCora/coradem/internal/panel"
 )
 
 type PanelControlPlane struct {

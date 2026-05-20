@@ -1,6 +1,6 @@
 # Corade 上游同步与品牌重套标准流程
 
-本文档用于指导后续 AI 或人工，以**固定、可重复**的方式把上游 [`upstream/dev`](.git/config:16) 同步到当前仓库，并重新套用 Corade 的定制要求。
+本文档用于指导后续 AI 或人工，以**固定、可重复**的方式把外部上游代码同步到当前独立仓库，并重新套用 Corade 的定制要求。
 
 适用场景：
 - 上游 [`cedar2025/Xboard-Node`](.git/config:17) 有新提交
@@ -75,14 +75,14 @@ GIT_SSH_COMMAND='ssh -i /root/.miyao/my_ed25519_key -o IdentitiesOnly=yes -o Str
 git log --oneline --decorate --graph --max-count=20 --all
 ```
 
-目标通常是把 [`upstream/dev`](.git/config:16) 合并到当前 [`dev`](.:1)。
+目标通常是把外部上游分支合并到当前 [`main`](.:1)。
 
 ---
 
 ## Step 2：执行合并
 
 ```bash
-git merge upstream/dev
+git merge upstream/main
 ```
 
 如果无冲突，直接进入后续验证。
@@ -107,7 +107,7 @@ grep -RIn '^<<<<<<<\|^=======\|^>>>>>>>' . --exclude-dir=.git
 - [`install.sh`](install.sh)
 - [`README.md`](README.md)
 - [`README-cn.md`](README-cn.md)
-- [`cmd/xboard-node/main.go`](cmd/xboard-node/main.go)
+- [`cmd/corade/main.go`](cmd/corade/main.go)
 - [`cmd/xbctl/main.go`](cmd/xbctl/main.go)
 - [`config.yml.example`](config.yml.example)
 - [`internal/config/config.go`](internal/config/config.go)
@@ -138,7 +138,7 @@ git checkout --theirs <file>
 
 适合直接保留上游结构的文件：
 - [`install.sh`](install.sh)
-- [`cmd/xboard-node/main.go`](cmd/xboard-node/main.go)
+- [`cmd/corade/main.go`](cmd/corade/main.go)
 - [`cmd/xbctl/main.go`](cmd/xbctl/main.go)
 - [`internal/config/config.go`](internal/config/config.go)
 - [`internal/config/config_test.go`](internal/config/config_test.go)
@@ -167,7 +167,7 @@ git checkout --theirs <file>
 | `/usr/local/bin/xbctl` | `/usr/local/bin/coradectl` |
 | `xboard-node.service` | `corade.service` |
 | `ghcr.io/cedar2025/xboard-node` | `ghcr.io/claracora/corade` |
-| `https://github.com/cedar2025/xboard-node/releases` | `https://github.com/ClaraCora/coradem/releases` |
+| `https://github.com/ClaraCora/coradem/releases` | `https://github.com/ClaraCora/coradem/releases` |
 | `https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh` | `https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh` |
 
 ### 5.2 需要重点人工复核的文件
@@ -233,13 +233,13 @@ git diff --name-only --diff-filter=U
 grep -RIn 'xboard-node\|xbctl\|cedar2025/xboard-node' \
   install.sh README.md README-cn.md config.yml.example \
   Makefile Dockerfile .github/workflows/ci.yml \
-  cmd/xbctl/main.go cmd/xboard-node/main.go \
+  cmd/xbctl/main.go cmd/corade/main.go \
   internal/config/config.go internal/config/config_test.go internal/cert/cert.go \
   docs-custom-routes.md docs-custom-outbounds.md || true
 ```
 
 注意：
-- import 路径里出现 [`github.com/cedar2025/xboard-node`](cmd/xboard-node/main.go:17) 暂时允许
+- import 路径里出现 [`github.com/ClaraCora/coradem`](cmd/corade/main.go:17) 暂时允许
 - 这是源码级标识，不是运行时外显问题
 - 不要在这一步强行改 `module` 和 import 路径，除非准备整体重命名 Go module
 
@@ -278,7 +278,7 @@ make build
 ```bash
 git add -A
 git commit -m "merge: sync upstream dev and reapply corade branding"
-GIT_SSH_COMMAND='ssh -i /root/.miyao/my_ed25519_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' git push origin HEAD
+GIT_SSH_COMMAND='ssh -i /root/.miyao/my_ed25519_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' git push origin main
 ```
 
 ---
@@ -299,7 +299,7 @@ GIT_SSH_COMMAND='ssh -i /root/.miyao/my_ed25519_key -o IdentitiesOnly=yes -o Str
 
 3. 合并：
 ```bash
-git merge upstream/dev
+git merge upstream/main
 ```
 
 4. 列冲突：
@@ -309,7 +309,7 @@ git diff --name-only --diff-filter=U
 
 5. 对核心文件优先采用上游结构：
 ```bash
-git checkout --theirs .github/workflows/ci.yml Makefile README.md cmd/xboard-node/main.go config.yml.example install.sh internal/cert/cert.go internal/config/config.go internal/config/config_test.go
+git checkout --theirs .github/workflows/ci.yml Makefile README.md cmd/corade/main.go config.yml.example install.sh internal/cert/cert.go internal/config/config.go internal/config/config_test.go
 ```
 
 6. 然后重套 Corade 规则：
@@ -320,11 +320,11 @@ git checkout --theirs .github/workflows/ci.yml Makefile README.md cmd/xboard-nod
 - `/usr/local/bin/xbctl -> /usr/local/bin/coradectl`
 - `xboard-node.service -> corade.service`
 - `ghcr.io/cedar2025/xboard-node -> ghcr.io/claracora/corade`
-- `https://github.com/cedar2025/xboard-node/releases -> https://github.com/ClaraCora/coradem/releases`
+- `https://github.com/ClaraCora/coradem/releases -> https://github.com/ClaraCora/coradem/releases`
 
 7. 再检查残留：
 ```bash
-grep -RIn 'xboard-node\|xbctl\|cedar2025/xboard-node' install.sh README.md README-cn.md config.yml.example Makefile Dockerfile .github/workflows/ci.yml cmd/xbctl/main.go cmd/xboard-node/main.go internal/config/config.go internal/config/config_test.go internal/cert/cert.go docs-custom-routes.md docs-custom-outbounds.md || true
+grep -RIn 'xboard-node\|xbctl\|cedar2025/xboard-node' install.sh README.md README-cn.md config.yml.example Makefile Dockerfile .github/workflows/ci.yml cmd/xbctl/main.go cmd/corade/main.go internal/config/config.go internal/config/config_test.go internal/cert/cert.go docs-custom-routes.md docs-custom-outbounds.md || true
 ```
 
 8. 测试：
@@ -335,7 +335,7 @@ go test ./...
 9. 提交推送：
 ```bash
 git add -A && git commit -m "merge: sync upstream dev and reapply corade branding"
-GIT_SSH_COMMAND='ssh -i /root/.miyao/my_ed25519_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' git push origin HEAD
+GIT_SSH_COMMAND='ssh -i /root/.miyao/my_ed25519_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' git push origin main
 ```
 
 ---
@@ -345,7 +345,7 @@ GIT_SSH_COMMAND='ssh -i /root/.miyao/my_ed25519_key -o IdentitiesOnly=yes -o Str
 ### 不要做的事
 - 不要在同步上游时优先保留旧版 [`install.sh`](install.sh)
 - 不要在未确认测试通过前直接推送
-- 不要把源码 import 路径中的 [`github.com/cedar2025/xboard-node`](cmd/xboard-node/main.go:17) 当作第一优先级处理
+- 不要把源码 import 路径中的 [`github.com/ClaraCora/coradem`](cmd/corade/main.go:17) 当作第一优先级处理
 - 不要把“运行时外显清理”和“Go module 改名”混为一谈
 
 ### 建议优先级

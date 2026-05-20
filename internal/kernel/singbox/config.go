@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cedar2025/xboard-node/internal/config"
-	"github.com/cedar2025/xboard-node/internal/kernel"
-	"github.com/cedar2025/xboard-node/internal/model"
-	"github.com/cedar2025/xboard-node/internal/nlog"
+	"github.com/ClaraCora/coradem/internal/config"
+	"github.com/ClaraCora/coradem/internal/kernel"
+	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/coradem/internal/nlog"
 	"github.com/go-viper/mapstructure/v2"
 )
 

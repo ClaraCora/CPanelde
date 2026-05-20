@@ -5,10 +5,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/cedar2025/xboard-node/internal/config"
-	"github.com/cedar2025/xboard-node/internal/kernel"
-	"github.com/cedar2025/xboard-node/internal/model"
-	"github.com/cedar2025/xboard-node/internal/panel"
+	"github.com/ClaraCora/coradem/internal/config"
+	"github.com/ClaraCora/coradem/internal/kernel"
+	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/coradem/internal/panel"
 )
 
 var testUsersPanel = []panel.User{

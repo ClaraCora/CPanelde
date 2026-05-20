@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 go build -ldflags "-s -w \
     -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev) \
     -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     -tags "with_quic with_utls with_wireguard with_clash_api" \
-    -o corade ./cmd/xboard-node
+    -o corade ./cmd/corade
 
 # Runtime stage — sing-box & xray-core are embedded as Go libraries
 FROM alpine:3.20

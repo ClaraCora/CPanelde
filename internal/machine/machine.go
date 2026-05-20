@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cedar2025/xboard-node/internal/config"
-	"github.com/cedar2025/xboard-node/internal/controlplane"
-	"github.com/cedar2025/xboard-node/internal/model"
-	"github.com/cedar2025/xboard-node/internal/monitor"
-	"github.com/cedar2025/xboard-node/internal/nlog"
-	"github.com/cedar2025/xboard-node/internal/panel"
-	"github.com/cedar2025/xboard-node/internal/service"
+	"github.com/ClaraCora/coradem/internal/config"
+	"github.com/ClaraCora/coradem/internal/controlplane"
+	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/coradem/internal/monitor"
+	"github.com/ClaraCora/coradem/internal/nlog"
+	"github.com/ClaraCora/coradem/internal/panel"
+	"github.com/ClaraCora/coradem/internal/service"
 )
 
 // nodeHandle tracks a running node service.

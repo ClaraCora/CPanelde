@@ -22,13 +22,12 @@ docker run -d --restart=always --network=host \
   ghcr.io/claracora/corade:latest
 ```
 
-### Docker Compose
+### Build from source
 
 ```bash
-git clone -b compose --depth 1 https://github.com/ClaraCora/coradem.git
+git clone https://github.com/ClaraCora/coradem.git
 cd coradem
-vim config/config.yml   # set panel.url / token / node_id
-docker compose up -d
+make build
 ```
 
 ### Installer (Linux systemd)

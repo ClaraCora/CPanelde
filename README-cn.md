@@ -64,7 +64,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ClaraCora/coradem/main/insta
 - 节点 1 是 Shadowsocks
 - 节点 2 是 VLESS
 
-只要面板中的节点 ID 不同、监听端口不冲突，就可以在同一台机器同时运行多个 [`corade@<id>`](README-cn.md) 实例。
+只要面板中的节点 ID 不同、监听端口不冲突，就可以在同一台机器上由同一个 [`corade.service`](README-cn.md:95) 统一管理多个实例。
 
 ### 时间同步快速修复
 
@@ -92,7 +92,7 @@ bash install.sh -a https://panel.example.com -t YOUR_TOKEN -n 1
 
 - 二进制文件：`corade`
 - 配置目录：`/etc/corade`
-- systemd 模板服务：`corade@.service`
+- systemd 服务：`corade.service`
 - Docker 镜像：`ghcr.io/claracora/corade:latest`
 
 ### Docker 安装
@@ -122,19 +122,19 @@ corade -c /etc/corade/config.yml
 查看某个节点实例状态：
 
 ```bash
-systemctl status corade@1 -l
+systemctl status corade.service -l
 ```
 
 判断节点是否正在运行：
 
 ```bash
-systemctl is-active corade@1
+systemctl is-active corade.service
 ```
 
 查看所有 Corade 实例：
 
 ```bash
-systemctl list-units 'corade@*'
+coradectl list
 ```
 
 ### 查看日志
@@ -142,13 +142,13 @@ systemctl list-units 'corade@*'
 查看最近 100 行日志：
 
 ```bash
-journalctl -u corade@1 -n 100 --no-pager
+journalctl -u corade.service -n 100 --no-pager
 ```
 
 实时跟踪日志：
 
 ```bash
-journalctl -u corade@1 -f
+journalctl -u corade.service -f
 ```
 
 ### 启动 / 停止 / 重启
@@ -156,31 +156,31 @@ journalctl -u corade@1 -f
 启动节点：
 
 ```bash
-systemctl start corade@1
+systemctl start corade.service
 ```
 
 停止节点：
 
 ```bash
-systemctl stop corade@1
+systemctl stop corade.service
 ```
 
 重启节点：
 
 ```bash
-systemctl restart corade@1
+systemctl restart corade.service
 ```
 
 设置开机自启：
 
 ```bash
-systemctl enable corade@1
+systemctl enable corade.service
 ```
 
 取消开机自启：
 
 ```bash
-systemctl disable corade@1
+systemctl disable corade.service
 ```
 
 ### 查看监听端口
@@ -222,7 +222,7 @@ sudo coradectl upgrade
 例如只移除节点 2：
 
 ```bash
-bash install.sh remove 2
+sudo coradectl bind remove-node --panel https://panel.example.com --node-id 2
 ```
 
 ## 卸载
@@ -240,9 +240,9 @@ bash install.sh
 如果你想手动卸载某个节点，例如节点 1：
 
 ```bash
-systemctl stop corade@1
-systemctl disable corade@1
-rm -rf /etc/corade/1
+systemctl stop corade.service
+systemctl disable corade.service
+rm -rf /etc/corade
 systemctl daemon-reload
 ```
 
@@ -251,9 +251,9 @@ systemctl daemon-reload
 如果你要把整台 VPS 上的 Corade 全部移除：
 
 ```bash
-systemctl stop 'corade@*'
-systemctl disable 'corade@*'
-rm -f /etc/systemd/system/corade@.service
+systemctl stop corade.service
+systemctl disable corade.service
+rm -f /etc/systemd/system/corade.service
 rm -f /usr/local/bin/corade
 rm -rf /etc/corade
 systemctl daemon-reload
@@ -289,7 +289,7 @@ kernel:
 先看日志：
 
 ```bash
-journalctl -u corade@1 -n 100 --no-pager
+journalctl -u corade.service -n 100 --no-pager
 ```
 
 然后依次检查：
@@ -312,7 +312,7 @@ journalctl -u corade@1 -n 100 --no-pager
 - 节点 1：Shadowsocks
 - 节点 2：VLESS
 
-两者可以作为独立的 [`corade@<id>`](README-cn.md) 实例同时运行在同一台机器上。
+两者可以作为两个绑定实例，由同一个 [`corade.service`](README-cn.md:95) 进程统一运行在同一台机器上。
 
 ## 兼容性说明
 
