@@ -86,55 +86,162 @@ func outboundConfigToSingbox(oc model.OutboundConfig) M {
 		"tag":  oc.Tag,
 	}
 
-	// Transform common protocol keys to sing-box native format
-	// WireGuard: secret_key -> private_key; peers: endpoint -> address+port
-	if oc.Protocol == "wireguard" {
-		if sk, ok := oc.Settings["secret_key"]; ok {
-			m["private_key"] = sk
-		}
-		if peers, ok := oc.Settings["peers"].([]any); ok {
-			var wgPeers []M
-			for _, p := range peers {
-				if peerMap, ok := p.(map[string]any); ok {
-					newPeer := M{}
-					for k, v := range peerMap {
-						if k == "endpoint" {
-							if ep, ok := v.(string); ok {
-								host, portStr, err := net.SplitHostPort(ep)
-								if err == nil {
-									newPeer["address"] = host
-									port, _ := strconv.Atoi(portStr)
-									newPeer["port"] = port
-								} else {
-									newPeer["address"] = ep
-								}
-							}
-						} else {
-							newPeer[k] = v
-						}
-					}
-					wgPeers = append(wgPeers, newPeer)
-				}
-			}
-			m["peers"] = wgPeers
-		}
-
-		// Copy any other top-level settings not handled above
-		for k, v := range oc.Settings {
-			if k != "secret_key" && k != "peers" {
-				m[k] = v
-			}
-		}
-	} else {
-		for k, v := range oc.Settings {
-			m[k] = v
-		}
+	for k, v := range normalizeSingboxOutboundSettings(oc.Protocol, oc.Settings) {
+		m[k] = v
 	}
 
 	if oc.ProxyTag != "" {
 		m["proxy_tag"] = oc.ProxyTag
 	}
 	return m
+}
+
+func normalizeSingboxOutboundSettings(protocol string, settings map[string]any) M {
+	out := M{}
+	for k, v := range settings {
+		if k == "settings" {
+			if nested, ok := v.(map[string]any); ok {
+				for nk, nv := range normalizeSingboxOutboundSettings(protocol, nested) {
+					out[nk] = nv
+				}
+			}
+			continue
+		}
+		out[normalizeSingboxOutboundKey(k)] = v
+	}
+
+	normalizeSingboxServerFields(out)
+
+	if protocol == "wireguard" {
+		normalizeSingboxWireGuard(out)
+	}
+
+	return out
+}
+
+func normalizeSingboxOutboundKey(key string) string {
+	switch key {
+	case "address":
+		return "server"
+	case "port", "serverPort":
+		return "server_port"
+	case "secret_key":
+		return "private_key"
+	case "method":
+		return "method"
+	default:
+		return key
+	}
+}
+
+func normalizeSingboxServerFields(out M) {
+	if password, ok := out["pass"]; ok {
+		if _, exists := out["password"]; !exists {
+			out["password"] = password
+		}
+		delete(out, "pass")
+	}
+	if passwd, ok := out["passwd"]; ok {
+		if _, exists := out["password"]; !exists {
+			out["password"] = passwd
+		}
+		delete(out, "passwd")
+	}
+	if servers, ok := out["servers"]; ok {
+		if server, port, method, password, ok := firstSingboxServer(servers); ok {
+			if _, exists := out["server"]; !exists {
+				out["server"] = server
+			}
+			if port != nil {
+				if _, exists := out["server_port"]; !exists {
+					out["server_port"] = port
+				}
+			}
+			if method != nil {
+				if _, exists := out["method"]; !exists {
+					out["method"] = method
+				}
+			}
+			if password != nil {
+				if _, exists := out["password"]; !exists {
+					out["password"] = password
+				}
+			}
+		}
+		delete(out, "servers")
+	}
+	if port, ok := out["port"]; ok {
+		if _, exists := out["server_port"]; !exists {
+			out["server_port"] = port
+		}
+		delete(out, "port")
+	}
+}
+
+func firstSingboxServer(value any) (any, any, any, any, bool) {
+	list, ok := value.([]any)
+	if !ok || len(list) == 0 {
+		return nil, nil, nil, nil, false
+	}
+	server, ok := list[0].(map[string]any)
+	if !ok {
+		return nil, nil, nil, nil, false
+	}
+	address, ok := server["address"]
+	if !ok {
+		address, ok = server["server"]
+	}
+	if !ok {
+		return nil, nil, nil, nil, false
+	}
+	port, _ := server["port"]
+	if port == nil {
+		port, _ = server["server_port"]
+	}
+	method, _ := server["method"]
+	if method == nil {
+		method, _ = server["version"]
+	}
+	password, _ := server["password"]
+	if password == nil {
+		password, _ = server["pass"]
+	}
+	if password == nil {
+		password, _ = server["passwd"]
+	}
+	return address, port, method, password, true
+}
+
+func normalizeSingboxWireGuard(out M) {
+	delete(out, "method")
+	if peers, ok := out["peers"].([]any); ok {
+		var wgPeers []M
+		for _, p := range peers {
+			peerMap, ok := p.(map[string]any)
+			if !ok {
+				continue
+			}
+			newPeer := M{}
+			for k, v := range peerMap {
+				if k == "endpoint" {
+					if ep, ok := v.(string); ok {
+						host, portStr, err := net.SplitHostPort(ep)
+						if err == nil {
+							newPeer["address"] = host
+							port, _ := strconv.Atoi(portStr)
+							newPeer["port"] = port
+						} else {
+							newPeer["address"] = ep
+						}
+					}
+					continue
+				}
+				newPeer[normalizeSingboxOutboundKey(k)] = v
+			}
+			wgPeers = append(wgPeers, newPeer)
+		}
+		out["peers"] = wgPeers
+	}
 }
 
 func mergeRouteList(a, b []map[string]any) []map[string]any {
@@ -156,7 +263,13 @@ func buildRoutes(panelRoutes []model.RouteRule, customRules []model.CustomRouteR
 	}
 
 	// Raw custom routes remain the escape hatch, but no longer outrank structured rules.
+	// Some Xboard versions may place structured route-rule objects under custom_routes;
+	// normalize those before appending raw sing-box-native rules.
 	for _, cr := range custom {
+		if compiled, ok := compileMaybeStructuredCustomRoute(cr); ok {
+			rules = append(rules, compiled...)
+			continue
+		}
 		rules = append(rules, M(cr))
 	}
 
@@ -244,6 +357,84 @@ func compilePanelRouteRule(pr model.RouteRule) []M {
 		})
 	}
 	return compiled
+}
+
+func compileMaybeStructuredCustomRoute(raw map[string]any) ([]M, bool) {
+	if raw == nil {
+		return nil, false
+	}
+	if _, hasMatch := raw["match"]; !hasMatch {
+		return nil, false
+	}
+	if _, hasAction := raw["action"]; !hasAction {
+		return nil, false
+	}
+	var rule model.CustomRouteRule
+	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		Result:           &rule,
+		MatchName:        func(mapKey, fieldName string) bool { return strings.EqualFold(mapKey, fieldName) },
+		WeaklyTypedInput: true,
+	})
+	if err != nil || decoder.Decode(raw) != nil {
+		return nil, false
+	}
+	rule = normalizeDecodedCustomRouteRule(rule, raw)
+	return compileCustomRouteRule(rule), true
+}
+
+func normalizeDecodedCustomRouteRule(rule model.CustomRouteRule, raw map[string]any) model.CustomRouteRule {
+	match, _ := raw["match"].(map[string]any)
+	if len(rule.Match.DomainSuffixes) == 0 {
+		rule.Match.DomainSuffixes = stringSliceFromAny(firstAny(match, "domain_suffixes", "domainSuffixes"))
+	}
+	if len(rule.Match.IPCIDRs) == 0 {
+		rule.Match.IPCIDRs = stringSliceFromAny(firstAny(match, "ip_cidrs", "ipCidrs"))
+	}
+	if len(rule.Match.SourceCIDRs) == 0 {
+		rule.Match.SourceCIDRs = stringSliceFromAny(firstAny(match, "source_cidrs", "sourceCidrs"))
+	}
+	if len(rule.Match.SourcePorts) == 0 {
+		rule.Match.SourcePorts = stringSliceFromAny(firstAny(match, "source_ports", "sourcePorts"))
+	}
+	action, _ := raw["action"].(map[string]any)
+	if rule.Action.Type == "" {
+		rule.Action.Type, _ = firstAny(action, "type").(string)
+	}
+	if rule.Action.Target == "" {
+		rule.Action.Target, _ = firstAny(action, "target").(string)
+	}
+	return rule
+}
+
+func firstAny(m map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if v, ok := m[key]; ok {
+			return v
+		}
+	}
+	return nil
+}
+
+func stringSliceFromAny(value any) []string {
+	switch v := value.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	default:
+		return nil
+	}
 }
 
 func compileCustomRouteRule(rule model.CustomRouteRule) []M {

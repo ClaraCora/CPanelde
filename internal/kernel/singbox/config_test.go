@@ -526,6 +526,55 @@ func TestBuildConfig(t *testing.T) {
 	assertMapValue(t, inbounds[0], "type", "shadowsocks")
 }
 
+func TestBuildRoutes_NormalizesStructuredRulesFromRawCustomRoutes(t *testing.T) {
+	route := buildRoutes(nil, nil, []map[string]any{{
+		"match":  map[string]any{"domain_suffixes": []any{"example.com"}},
+		"action": map[string]any{"type": "route", "target": "proxy"},
+	}})
+	rules := route["rules"].([]M)
+	var found M
+	for _, rule := range rules {
+		if rule["outbound"] == "proxy" {
+			found = rule
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("compiled structured custom route not found: %#v", rules)
+	}
+	if _, ok := found["action"]; ok {
+		t.Fatalf("structured action should be compiled away: %#v", found)
+	}
+	if _, ok := found["domain_suffix"]; !ok {
+		t.Fatalf("structured match should compile to sing-box rule: %#v", found)
+	}
+}
+
+func TestOutboundConfigToSingbox_NormalizesXboardServerList(t *testing.T) {
+	out := outboundConfigToSingbox(model.OutboundConfig{
+		Tag:      "proxy",
+		Protocol: "socks",
+		Settings: map[string]any{
+			"servers": []any{map[string]any{"address": "2.2.2.2", "port": 1080, "password": "secret"}},
+		},
+	})
+	assertMapValue(t, out, "type", "socks")
+	assertMapValue(t, out, "tag", "proxy")
+	assertMapValue(t, out, "server", "2.2.2.2")
+	assertMapValue(t, out, "server_port", 1080)
+	assertMapValue(t, out, "password", "secret")
+	wg := outboundConfigToSingbox(model.OutboundConfig{Tag: "wg", Protocol: "wireguard", Settings: map[string]any{"method": "wireguard", "servers": []any{map[string]any{"address": "1.1.1.1", "port": 2408, "method": "wireguard"}}}})
+	if _, ok := wg["method"]; ok {
+		t.Fatalf("xboard method should be normalized away: %#v", wg)
+	}
+	if _, ok := wg["version"]; ok {
+		t.Fatalf("unsupported version should not be emitted for wireguard: %#v", wg)
+	}
+	if _, ok := out["servers"]; ok {
+		t.Fatalf("servers should be normalized away: %#v", out)
+	}
+}
+
 func TestBuildConfig_OutboundPriority(t *testing.T) {
 	kcfg := config.KernelConfig{
 		LogLevel: "info",
