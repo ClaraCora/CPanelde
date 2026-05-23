@@ -375,6 +375,23 @@ run_with_retry() {
     return 1
 }
 
+# Download helper for public or private GitHub release assets.
+# For private repositories, set GITHUB_TOKEN before running this installer.
+github_curl_download() {
+    local url="$1"
+    local output="$2"
+
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/octet-stream" \
+            "$url" \
+            -o "$output"
+    else
+        curl -fsSL "$url" -o "$output"
+    fi
+}
+
 install_dependencies() {
     case "$OS" in
         ubuntu|debian)
@@ -499,8 +516,11 @@ stage_binary() {
     else
         resolve_download_url "corade-linux-${ARCH}"
         log_step "Downloading binary: ${DOWNLOAD_URL}"
-        if ! curl -fsSL "$DOWNLOAD_URL" -o "$staged"; then
+        if ! github_curl_download "$DOWNLOAD_URL" "$staged"; then
             log_error "Failed to download binary from ${DOWNLOAD_URL}"
+            if [ -z "${GITHUB_TOKEN:-}" ]; then
+                log_error "GITHUB_TOKEN is not set; private GitHub releases require authentication"
+            fi
             exit 1
         fi
     fi
@@ -531,8 +551,11 @@ stage_coradectl() {
     else
         resolve_download_url "coradectl-linux-${ARCH}"
         log_step "Downloading coradectl: ${DOWNLOAD_URL}"
-        if ! curl -fsSL "$DOWNLOAD_URL" -o "$staged"; then
+        if ! github_curl_download "$DOWNLOAD_URL" "$staged"; then
             log_error "Failed to download coradectl from ${DOWNLOAD_URL}"
+            if [ -z "${GITHUB_TOKEN:-}" ]; then
+                log_error "GITHUB_TOKEN is not set; private GitHub releases require authentication"
+            fi
             exit 1
         fi
     fi
