@@ -15,7 +15,7 @@ import (
 
 	"github.com/caddyserver/certmagic"
 
-	"github.com/ClaraCora/coradem/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/config"
 )
 
 // generateSelfSignedPair returns a fresh self-signed certificate and matching

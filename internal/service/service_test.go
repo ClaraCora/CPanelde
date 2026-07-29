@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ClaraCora/coradem/internal/cert"
-	"github.com/ClaraCora/coradem/internal/config"
-	"github.com/ClaraCora/coradem/internal/kernel"
-	"github.com/ClaraCora/coradem/internal/limiter"
-	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/cert"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/kernel"
+	"github.com/ClaraCora/CPanelde/internal/limiter"
+	"github.com/ClaraCora/CPanelde/internal/model"
 	"golang.org/x/time/rate"
 )
 

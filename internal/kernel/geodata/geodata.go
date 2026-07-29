@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ClaraCora/coradem/internal/nlog"
+	"github.com/ClaraCora/CPanelde/internal/nlog"
 )
 
 const (

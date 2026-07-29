@@ -3,7 +3,7 @@ package kernel
 import (
 	"strings"
 
-	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/model"
 )
 
 // NeedsGeoIP returns true when any panel route rule contains a "geoip:" match entry.

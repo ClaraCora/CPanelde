@@ -17,7 +17,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/ClaraCora/coradem/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,7 +30,7 @@ const (
 	serviceName            = "corade.service"
 	serviceFilePath        = "/etc/systemd/system/corade.service"
 	defaultInstallRoot     = "/etc/corade"
-	downloadBase           = "https://github.com/ClaraCora/coradem/releases"
+	downloadBase           = "https://github.com/ClaraCora/CPanelde/releases"
 )
 
 var (

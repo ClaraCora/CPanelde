@@ -23,10 +23,10 @@ import (
 
 	"github.com/caddyserver/certmagic"
 
-	"github.com/ClaraCora/coradem/internal/cert/dnsproviders"
-	"github.com/ClaraCora/coradem/internal/config"
-	"github.com/ClaraCora/coradem/internal/kernel"
-	"github.com/ClaraCora/coradem/internal/nlog"
+	"github.com/ClaraCora/CPanelde/internal/cert/dnsproviders"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/kernel"
+	"github.com/ClaraCora/CPanelde/internal/nlog"
 )
 
 // Manager handles TLS certificate lifecycle.

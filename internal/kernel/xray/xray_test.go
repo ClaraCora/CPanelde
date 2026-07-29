@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ClaraCora/coradem/internal/config"
-	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/model"
 	appstats "github.com/xtls/xray-core/app/stats"
 	xrayCore "github.com/xtls/xray-core/core"
 	featurebandwidth "github.com/xtls/xray-core/features/bandwidth"

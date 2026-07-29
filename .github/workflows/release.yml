@@ -1,0 +1,88 @@
+name: Build latest release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: latest-release
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Validate installer
+        run: bash -n install.sh
+      - run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            goarch: amd64
+          - arch: arm64
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build Linux Agent
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          VERSION=${GITHUB_SHA::12}
+          go build -trimpath \
+            -tags "with_quic with_utls with_wireguard with_acme with_clash_api" \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
+            -o "dist/corade-linux-${{ matrix.arch }}" ./cmd/corade
+          cd dist
+          sha256sum "corade-linux-${{ matrix.arch }}" > "corade-linux-${{ matrix.arch }}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corade-linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: corade-linux-*
+          path: dist
+          merge-multiple: true
+      - name: Publish rolling latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag --force latest "$GITHUB_SHA"
+          git push origin refs/tags/latest --force
+          if gh release view latest >/dev/null 2>&1; then
+            gh release edit latest --title "Latest CPanelde Agent build" --prerelease --notes "Automatically built from main at ${GITHUB_SHA}."
+            gh release upload latest dist/* --clobber
+          else
+            gh release create latest dist/* --title "Latest CPanelde Agent build" --prerelease --notes "Automatically built from main at ${GITHUB_SHA}."
+          fi

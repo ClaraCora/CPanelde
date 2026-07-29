@@ -29,11 +29,11 @@ import (
 
 	_ "github.com/xtls/xray-core/main/distro/all"
 
-	"github.com/ClaraCora/coradem/internal/config"
-	"github.com/ClaraCora/coradem/internal/kernel"
-	"github.com/ClaraCora/coradem/internal/kernel/geodata"
-	"github.com/ClaraCora/coradem/internal/model"
-	"github.com/ClaraCora/coradem/internal/nlog"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/kernel"
+	"github.com/ClaraCora/CPanelde/internal/kernel/geodata"
+	"github.com/ClaraCora/CPanelde/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/nlog"
 )
 
 const (

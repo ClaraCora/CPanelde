@@ -3,7 +3,7 @@ package model
 import (
 	"testing"
 
-	"github.com/ClaraCora/coradem/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/config"
 )
 
 func TestNodeSpecFromStandalone(t *testing.T) {

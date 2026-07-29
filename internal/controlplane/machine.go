@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ClaraCora/coradem/internal/config"
-	"github.com/ClaraCora/coradem/internal/model"
-	"github.com/ClaraCora/coradem/internal/nlog"
-	"github.com/ClaraCora/coradem/internal/panel"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/nlog"
+	"github.com/ClaraCora/CPanelde/internal/panel"
 )
 
 // MachinePanelControlPlane implements ControlPlane for a single node running

@@ -17,7 +17,7 @@ import (
 	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/transport"
 
-	"github.com/ClaraCora/coradem/internal/nlog"
+	"github.com/ClaraCora/CPanelde/internal/nlog"
 )
 
 // Access xray's internal config creator registry so we can replace the

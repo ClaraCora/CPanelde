@@ -4,7 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/model"
 )
 
 // Limiter enforces per-user device limits and detects removed users.

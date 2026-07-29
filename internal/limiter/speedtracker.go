@@ -4,7 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/model"
 	"golang.org/x/time/rate"
 )
 

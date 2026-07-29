@@ -1,26 +1,21 @@
-# Corade Configuration
-# Top-level settings are inherited by all instances. Instance overrides take precedence.
+# Corade device platform configuration.
+# The token is read from CORADE_AGENT_TOKEN instead of being stored here.
+control:
+  mode: "device-platform"
+  url: "https://panel.example.com"
+  token_env: "CORADE_AGENT_TOKEN"
+  machine_id: "mch_example"
 
-# ── Single node (simplest) ──
-# panel:
-#   url: "https://panel.example.com"
-#   token: "your-api-key"
-#   node_id: 1
+kernel:
+  type: "singbox"
+  log_level: "warn"
 
-# ── Multiple instances ──
-# kernel:
-#   type: "singbox"
-# log:
-#   level: "info"
-# instances:
-#   - panel:
-#       url: "https://panel.example.com"
-#       token: "api-key-1"
-#       node_id: 1
-#   - panel:
-#       url: "https://panel.example.com"
-#     machine:
-#       machine_id: 2
-#       token: "machine-token-2"
-#     log:
-#       level: "debug"   # override for this instance only
+log:
+  level: "info"
+  output: "stdout"
+
+# Optional process health endpoint. Set to 0 to disable it.
+health_port: 65530
+
+# Standalone mode remains available for local operation. It cannot be combined
+# with control settings. See the standalone section in the project README.

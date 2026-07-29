@@ -1,76 +1,107 @@
 # Corade
 
-Corade is a self-branded node backend compatible with the Xboard API. It supports `sing-box` / `xray-core` dual kernels.
+Corade is the node agent for the CPanel device management platform. It runs
+`sing-box` or `xray-core` nodes assigned by CPanel and synchronizes node
+configuration, users, devices, traffic, and machine health.
 
-> **Disclaimer**: This project is for educational and learning purposes only.
+> This project is for educational and learning purposes only.
 
 ## Features
 
-- Protocols: V2Ray family, Trojan, Shadowsocks, Hysteria2, TUIC, AnyTLS
-- Sync: WebSocket push + REST polling dual channel
-- User controls: speed limit, device limit, alive-IP tracking, hot update
-- Deploy modes: node mode, machine mode, standalone mode
-- Multi-instance: single process binding multiple panels / nodes
+- Protocols: V2Ray family, Trojan, Shadowsocks, Hysteria2, TUIC, and AnyTLS
+- Kernels: `sing-box` and `xray-core`, selected per node by CPanel
+- Control channel: WebSocket events with cursor-based REST reconciliation
+- Dynamic nodes: one agent process starts and stops all nodes assigned to its server
+- User controls: speed limits, device limits, alive-IP tracking, and hot updates
+- Runtime modes: CPanel device platform or local standalone mode
 
-## Install
-
-### Build from source
+## Build
 
 ```bash
-git clone https://github.com/ClaraCora/coradem.git
-cd coradem
+git clone https://github.com/ClaraCora/CPanelde.git
+cd CPanelde
 make build
 ```
 
-### Installer (Linux systemd)
+The repository can also be built directly:
 
 ```bash
-# Node mode
-curl -fsSL https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh | \
-  sudo bash -s -- --mode node --panel https://panel.example.com --token TOKEN --node-id 1
-
-# Machine mode
-curl -fsSL https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh | \
-  sudo bash -s -- --mode machine --panel https://panel.example.com --token TOKEN --machine-id 1
+go build -trimpath -tags "with_quic with_utls with_wireguard with_acme with_clash_api" -o bin/corade ./cmd/corade
 ```
 
-### Upgrade / migrate from the old repository
+## One-click installation
 
-If a VPS was installed from the old repository, use the new installer URL once. It preserves `/etc/corade/config.yml`, replaces `corade` / `coradectl`, restarts `corade.service`, and switches future upgrades to this repository.
+The command generated on a CPanel server page contains the required server ID
+and communication key. It uses this repository's installer directly:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh | sudo bash -s -- upgrade
+curl -fsSL https://raw.githubusercontent.com/ClaraCora/CPanelde/main/install.sh | sudo bash -s -- \
+  --control-url https://panel.example.com \
+  --communication-key YOUR_COMMUNICATION_KEY \
+  --machine-id mch_example
 ```
 
-After that, regular upgrades can use:
+Upgrade an installed Agent without entering its communication key again:
 
 ```bash
-sudo coradectl upgrade
+curl -fsSL https://raw.githubusercontent.com/ClaraCora/CPanelde/main/install.sh | sudo bash -s -- upgrade
 ```
 
-## coradectl
+The installer supports Linux amd64 and arm64 with systemd. It first downloads a
+checksummed binary from CPanel and falls back to the checksummed `latest` GitHub
+release when the panel artifact is unavailable.
 
-Run `coradectl` after installation for help. Common commands:
+## Device Platform Configuration
+
+Create an Agent token in CPanel, expose it through an environment variable, and
+point Corade at the public CPanel URL:
+
+```yaml
+control:
+  mode: "device-platform"
+  url: "https://panel.example.com"
+  token_env: "CORADE_AGENT_TOKEN"
+
+kernel:
+  type: "singbox"
+  config_dir: "/etc/corade"
+
+log:
+  level: "info"
+  output: "stdout"
+```
 
 ```bash
-sudo coradectl upgrade                  # update Corade on the VPS
-coradectl list                          # list all instances
-coradectl status                        # running status
-coradectl bind add-node --panel URL --token TOKEN --node-id 1
-coradectl bind add-machine --panel URL --token TOKEN --machine-id 1
-coradectl bind remove-node --panel URL --node-id 1
-coradectl service restart
+export CORADE_AGENT_TOKEN='agent-token-from-cpanel'
+./bin/corade -c ./config.yml
 ```
 
-## Configuration
+`CORADE_CONTROL_URL` and `CORADE_AGENT_TOKEN` may also provide the control URL
+and token without storing them in YAML.
 
-Legacy single-panel config is fully compatible. Appending bindings auto-migrates to `instances` format. See `config.yml.example`.
+Corade accepts only `control.mode: device-platform` and `standalone` at runtime.
+Legacy panel, node, and machine configurations are rejected by the `corade`
+process. Their configuration structures remain temporarily available to
+`coradectl` for migration tooling and are not a runtime compatibility mode.
+
+## Standalone Mode
+
+Standalone mode runs one local node without contacting CPanel. It cannot be
+combined with `control`, `panel`, `machine`, or `nodes` settings. See the
+standalone examples in the configuration tests until a dedicated sample is
+added.
+
+## Control Protocol
+
+The Agent control surface is rooted at `/ca/cc`. Corade authenticates only with
+`Authorization: Bearer <agent-token>` and protocol version `1.0`; it does not
+send machine IDs, node types, or tokens in URLs.
 
 ## Extensions
 
 - Custom routes: [docs-custom-routes.md](docs-custom-routes.md)
 - Custom outbounds: [docs-custom-outbounds.md](docs-custom-outbounds.md)
-- DNS providers (ACME DNS-01): [docs-dns-providers.md](docs-dns-providers.md)
+- DNS providers: [docs-dns-providers.md](docs-dns-providers.md)
 
 ## License
 

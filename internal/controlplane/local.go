@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ClaraCora/coradem/internal/config"
-	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/model"
 )
 
 type LocalControlPlane struct {

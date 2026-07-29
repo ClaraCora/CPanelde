@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ClaraCora/coradem/internal/nlog"
+	"github.com/ClaraCora/CPanelde/internal/nlog"
 	"github.com/gorilla/websocket"
 )
 

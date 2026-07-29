@@ -18,10 +18,10 @@ import (
 	"github.com/sagernet/sing/service"
 	"golang.org/x/time/rate"
 
-	"github.com/ClaraCora/coradem/internal/config"
-	"github.com/ClaraCora/coradem/internal/kernel"
-	"github.com/ClaraCora/coradem/internal/model"
-	"github.com/ClaraCora/coradem/internal/nlog"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/kernel"
+	"github.com/ClaraCora/CPanelde/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/nlog"
 )
 
 // drainTimeout is how long stop() waits for in-flight connections to finish

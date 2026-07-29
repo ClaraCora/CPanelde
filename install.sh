@@ -1,874 +1,235 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
-
-APP_NAME="Corade"
-INSTALL_ROOT="/etc/corade"
-BACKUP_DIR="${INSTALL_ROOT}/backups"
-INSTALL_META="${INSTALL_ROOT}/install-meta.json"
-CONFIG_FILE="${INSTALL_ROOT}/config.yml"
-CREDENTIALS_FILE="${INSTALL_ROOT}/credentials.env"
-BINARY_PATH="/usr/local/bin/corade"
+REPOSITORY="ClaraCora/CPanelde"
 SERVICE_NAME="corade.service"
-SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
-CLI_PATH="/usr/local/bin/coradectl"
-INSTALLER_COPY_PATH="${INSTALL_ROOT}/install.sh"
-CLI_BINARY_SOURCE=""
-DEFAULT_HEALTH_PORT=65530
-DEFAULT_KERNEL="singbox"
-DEFAULT_MODE="node"
-DEFAULT_ACTION="install"
-DEFAULT_RELEASE_VERSION="latest"
-DEFAULT_LOG_LEVEL="info"
-DEFAULT_KERNEL_LOG_LEVEL="warn"
-DEFAULT_DOWNLOAD_BASE="https://github.com/ClaraCora/coradem/releases"
-
-ACTION="${DEFAULT_ACTION}"
-MODE=""
-PANEL_URL=""
-TOKEN=""
-NODE_ID=""
-NODE_TYPE=""
+BINARY_PATH="/usr/local/bin/corade"
+CONFIG_DIR="/etc/corade"
+CONFIG_FILE="${CONFIG_DIR}/config.yml"
+ENV_FILE="${CONFIG_DIR}/agent.env"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
+ACTION="install"
+CONTROL_URL="${CORADE_CONTROL_URL:-}"
+COMMUNICATION_KEY="${CORADE_AGENT_TOKEN:-}"
 MACHINE_ID=""
-KERNEL_TYPE="${DEFAULT_KERNEL}"
-RELEASE_VERSION="${DEFAULT_RELEASE_VERSION}"
-HEALTH_PORT="${DEFAULT_HEALTH_PORT}"
-HEALTH_ENABLED=1
-RUNTIME_GOMEMLIMIT=""
-RUNTIME_GOGC=""
+KERNEL_TYPE="singbox"
+HEALTH_PORT="65530"
 BINARY_SOURCE=""
-CLI_BINARY_SOURCE=""
-FORCE_RECONFIGURE=0
-PURGE=0
-YES=0
-ARCH=""
-OS=""
-DOWNLOAD_URL=""
-CURRENT_STATE="fresh"
-TMP_DIR=""
-BACKUP_PATH=""
-SERVICE_EXISTED=0
-CLEANUP_DONE=0
-
-log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-log_step()  { echo -e "${CYAN}[STEP]${NC} ${BOLD}$1${NC}"; }
-
-cleanup_tmp() {
-    if [ "$CLEANUP_DONE" -eq 1 ]; then
-        return
-    fi
-    CLEANUP_DONE=1
-    if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
-        rm -rf "$TMP_DIR"
-    fi
-}
-
-load_health_port_from_config() {
-    local cfg_path="$1"
-    if [ ! -f "$cfg_path" ]; then
-        return
-    fi
-    local parsed
-    if [ -x "$CLI_PATH" ]; then
-        parsed=$("$CLI_PATH" config health-port --config "$cfg_path" 2>/dev/null)
-    else
-        parsed=$(grep -m1 'health_port:' "$cfg_path" 2>/dev/null | sed 's/.*health_port:[[:space:]]*//' | tr -cd '0-9')
-    fi
-    if [ -n "$parsed" ] && [ "$parsed" -ge 0 ] 2>/dev/null; then
-        HEALTH_PORT="$parsed"
-        if [ "$HEALTH_PORT" -eq 0 ]; then
-            HEALTH_ENABLED=0
-        else
-            HEALTH_ENABLED=1
-        fi
-    fi
-}
-
-rollback_install() {
-    log_warn "Rolling back installation"
-    if [ -n "$BACKUP_PATH" ] && [ -d "$BACKUP_PATH" ]; then
-        if [ -f "$BACKUP_PATH/corade" ]; then
-            install -m 755 "$BACKUP_PATH/corade" "$BINARY_PATH"
-        else
-            rm -f "$BINARY_PATH"
-        fi
-        if [ -f "$BACKUP_PATH/config.yml" ]; then
-            install -m 600 "$BACKUP_PATH/config.yml" "$CONFIG_FILE"
-        else
-            rm -f "$CONFIG_FILE"
-        fi
-        if [ -f "$BACKUP_PATH/credentials.env" ]; then
-            install -m 600 "$BACKUP_PATH/credentials.env" "$CREDENTIALS_FILE"
-        else
-            rm -f "$CREDENTIALS_FILE"
-        fi
-        if [ -f "$BACKUP_PATH/install-meta.json" ]; then
-            install -m 644 "$BACKUP_PATH/install-meta.json" "$INSTALL_META"
-        else
-            rm -f "$INSTALL_META"
-        fi
-        if [ -f "$BACKUP_PATH/coradectl" ]; then
-            install -m 755 "$BACKUP_PATH/coradectl" "$CLI_PATH"
-        else
-            rm -f "$CLI_PATH"
-        fi
-        if [ -f "$BACKUP_PATH/${SERVICE_NAME}" ]; then
-            install -m 644 "$BACKUP_PATH/${SERVICE_NAME}" "$SERVICE_PATH"
-        else
-            rm -f "$SERVICE_PATH"
-        fi
-    fi
-    load_health_port_from_config "$CONFIG_FILE"
-    systemctl daemon-reload || true
-    if [ "$SERVICE_EXISTED" -eq 1 ] || [ -f "$SERVICE_PATH" ]; then
-        systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
-        systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || true
-        if ! wait_for_health; then
-            log_error "Rollback completed but restored service did not become healthy"
-            show_recent_logs
-            return 1
-        fi
-    else
-        systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
-    fi
-    log_warn "Rollback complete"
-}
-
-on_error() {
-    local exit_code=$?
-    local line_no=${1:-unknown}
-    if [ "$exit_code" -ne 0 ]; then
-        log_error "Install failed at line ${line_no} (exit=${exit_code})"
-        if [ -n "$BACKUP_PATH" ]; then
-            rollback_install || true
-        fi
-    fi
-    cleanup_tmp
-    exit "$exit_code"
-}
-trap 'on_error $LINENO' ERR
-trap cleanup_tmp EXIT
+VERSION="latest"
 
 usage() {
-    cat <<'HELP'
+  cat <<'HELP'
+Corade Agent installer
 
-  Corade Installer
+Usage:
+  install.sh [install] --control-url URL --communication-key KEY --machine-id ID [options]
+  install.sh upgrade [--version VERSION]
 
-  ACTIONS:
-    install      Install or reconcile the configured deployment (default)
-    upgrade      Upgrade binary and restart service
-    uninstall    Remove installed service and binaries (config kept unless --purge)
-    status       Show current installation status
-    help         Show this help
+Required for install:
+  --control-url URL            CPanel public URL
+  --communication-key KEY     Shared Agent communication key
+  --machine-id ID             CPanel server ID
 
-  MODES (auto-detected from --node-id or --machine-id if omitted):
-    --mode node      Panel single-node mode (default)
-    --mode machine   Panel machine mode
+Optional:
+  --kernel singbox|xray       Default kernel type (default: singbox)
+  --health-port PORT          Local health endpoint (default: 65530)
+  --binary PATH               Install a local Corade binary
+  --version VERSION           GitHub release tag (default: latest)
+  --help                      Show this help
 
-  REQUIRED FOR NODE MODE:
-    --panel, -a      Panel URL
-    --token, -t      Panel server token
-    --node-id, -n    Node ID
-
-  REQUIRED FOR MACHINE MODE:
-    --panel, -a       Panel URL
-    --token, -t       Machine token
-    --machine-id      Machine ID
-
-  OPTIONAL:
-    --node-type, -T     Explicit node type for node mode
-    --kernel, -k        singbox or xray (default: singbox)
-    --version           Release version or latest (default: latest)
-    --binary            Use a local corade binary path instead of downloading
-    --coradectl-binary      Use a local coradectl binary path instead of downloading
-    --health-port       Local health port (default: 65530, use 0 to disable)
-    --gomemlimit        Runtime GOMEMLIMIT value, e.g. 256MiB
-    --gogc              Runtime GOGC value, e.g. 50
-    --force-reconfigure Overwrite an existing install even if mode/target changed
-    --purge             With uninstall, delete /etc/corade too
-    --yes, -y           Non-interactive confirmation for destructive operations
-
-  EXAMPLES:
-    sudo bash install.sh --panel https://panel.example.com --token TOKEN --node-id 1
-    sudo bash install.sh --panel https://panel.example.com --token TOKEN --machine-id 1
-    sudo bash install.sh upgrade
-    sudo bash install.sh uninstall --purge --yes
-
+CORADE_CONTROL_URL and CORADE_AGENT_TOKEN may be used instead of putting those
+values on the command line.
 HELP
 }
 
-parse_args() {
-    local positional=()
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            install|upgrade|uninstall|status|help)
-                ACTION="$1"
-                shift
-                ;;
-            --mode)
-                MODE="$2"
-                shift 2
-                ;;
-            --panel|-a|--api)
-                PANEL_URL="$2"
-                shift 2
-                ;;
-            --token|-t)
-                TOKEN="$2"
-                shift 2
-                ;;
-            --node-id|-n)
-                NODE_ID="$2"
-                shift 2
-                ;;
-            --node-type|-T)
-                NODE_TYPE="$2"
-                shift 2
-                ;;
-            --machine-id)
-                MACHINE_ID="$2"
-                shift 2
-                ;;
-            --kernel|-k)
-                KERNEL_TYPE="$2"
-                shift 2
-                ;;
-            --version)
-                RELEASE_VERSION="$2"
-                shift 2
-                ;;
-            --binary)
-                BINARY_SOURCE="$2"
-                shift 2
-                ;;
-            --coradectl-binary)
-                CLI_BINARY_SOURCE="$2"
-                shift 2
-                ;;
-            --health-port)
-                HEALTH_PORT="$2"
-                shift 2
-                ;;
-            --gomemlimit)
-                RUNTIME_GOMEMLIMIT="$2"
-                shift 2
-                ;;
-            --gogc)
-                RUNTIME_GOGC="$2"
-                shift 2
-                ;;
-            --force-reconfigure)
-                FORCE_RECONFIGURE=1
-                shift
-                ;;
-            --purge)
-                PURGE=1
-                shift
-                ;;
-            --yes|-y)
-                YES=1
-                shift
-                ;;
-            --help|-h)
-                ACTION="help"
-                shift
-                ;;
-            *)
-                positional+=("$1")
-                shift
-                ;;
-        esac
-    done
+log() { printf '[corade] %s\n' "$*"; }
+fail() { printf '[corade] ERROR: %s\n' "$*" >&2; exit 1; }
 
-    if [ ${#positional[@]} -gt 0 ] && [ "$ACTION" = "install" ]; then
-        ACTION="${positional[0]}"
-    fi
+if [ "${1:-}" = "install" ] || [ "${1:-}" = "upgrade" ]; then
+  ACTION="$1"
+  shift
+fi
 
-    case "$KERNEL_TYPE" in
-        singbox|SingBox|SINGBOX) KERNEL_TYPE="singbox" ;;
-        xray|Xray|XRAY) KERNEL_TYPE="xray" ;;
-        *) ;;
-    esac
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --control-url) CONTROL_URL="${2:-}"; shift 2 ;;
+    --communication-key) COMMUNICATION_KEY="${2:-}"; shift 2 ;;
+    --machine-id) MACHINE_ID="${2:-}"; shift 2 ;;
+    --kernel) KERNEL_TYPE="${2:-}"; shift 2 ;;
+    --health-port) HEALTH_PORT="${2:-}"; shift 2 ;;
+    --binary) BINARY_SOURCE="${2:-}"; shift 2 ;;
+    --version) VERSION="${2:-}"; shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) fail "unknown argument: $1" ;;
+  esac
+done
 
-    # Auto-detect mode from arguments when --mode is not specified.
-    if [ -z "$MODE" ]; then
-        if [ -n "$MACHINE_ID" ]; then
-            MODE="machine"
-        else
-            MODE="node"
-        fi
-    fi
+[ "$(id -u)" -eq 0 ] || fail "run this installer as root"
+command -v systemctl >/dev/null 2>&1 || fail "systemd is required"
+command -v curl >/dev/null 2>&1 || fail "curl is required"
+command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required"
 
-    case "$MODE" in
-        node|machine) ;;
-        *)
-            log_error "Unsupported mode: $MODE"
-            usage
-            exit 1
-            ;;
-    esac
+case "$(uname -m)" in
+  x86_64|amd64) ARCH="amd64" ;;
+  aarch64|arm64) ARCH="arm64" ;;
+  *) fail "unsupported architecture: $(uname -m)" ;;
+esac
+
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf -- "$TMP_DIR"' EXIT
+STAGED_BINARY="${TMP_DIR}/corade"
+PREVIOUS_BINARY="${TMP_DIR}/corade.previous"
+ARTIFACT="corade-linux-${ARCH}"
+
+verify_staged_download() {
+  (cd "$TMP_DIR" && sha256sum --check --status "${ARTIFACT}.sha256")
 }
 
-check_root() {
-    if [ "$(id -u)" -ne 0 ]; then
-        log_error "Please run as root or with sudo"
-        exit 1
-    fi
-}
-
-detect_arch() {
-    local raw
-    raw=$(uname -m)
-    case "$raw" in
-        x86_64|amd64) ARCH="amd64" ;;
-        aarch64|arm64) ARCH="arm64" ;;
-        *)
-            log_error "Unsupported architecture: $raw"
-            exit 1
-            ;;
-    esac
-}
-
-detect_os() {
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS="$ID"
-    else
-        OS="unknown"
-    fi
-}
-
-ensure_systemd() {
-    if ! command -v systemctl >/dev/null 2>&1; then
-        log_error "systemd is required for this installer"
-        exit 1
-    fi
-    if [ ! -d /run/systemd/system ]; then
-        log_error "This host does not appear to be running systemd"
-        exit 1
-    fi
-}
-
-run_with_retry() {
-    local attempts="$1"
-    local delay="$2"
-    shift 2
-    local i=1
-    while [ "$i" -le "$attempts" ]; do
-        if "$@"; then
-            return 0
-        fi
-        if [ "$i" -lt "$attempts" ]; then
-            log_warn "Command failed, retrying in ${delay}s: $*"
-            sleep "$delay"
-        fi
-        i=$((i + 1))
-    done
+try_download() {
+  local base_url="$1"
+  rm -f "${TMP_DIR}/${ARTIFACT}" "${TMP_DIR}/${ARTIFACT}.sha256"
+  if ! curl --fail --location --silent --show-error --retry 3 "${base_url}/${ARTIFACT}" -o "${TMP_DIR}/${ARTIFACT}"; then
     return 1
-}
-
-# Download helper for public or private GitHub release assets.
-# For private repositories, set GITHUB_TOKEN before running this installer.
-github_curl_download() {
-    local url="$1"
-    local output="$2"
-
-    if [ -n "${GITHUB_TOKEN:-}" ]; then
-        curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/octet-stream" \
-            "$url" \
-            -o "$output"
-    else
-        curl -fsSL "$url" -o "$output"
-    fi
-}
-
-install_dependencies() {
-    case "$OS" in
-        ubuntu|debian)
-            DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get update -qq
-            DEBIAN_FRONTEND=noninteractive run_with_retry 10 3 apt-get install -y -qq curl wget ca-certificates >/dev/null 2>&1
-            ;;
-        centos|rhel|rocky|almalinux|fedora)
-            if command -v dnf >/dev/null 2>&1; then
-                run_with_retry 5 3 dnf install -y -q curl wget ca-certificates >/dev/null 2>&1
-            else
-                run_with_retry 5 3 yum install -y -q curl wget ca-certificates >/dev/null 2>&1
-            fi
-            ;;
-        *)
-            log_warn "OS ${OS} is not in the official support set; continuing best-effort"
-            ;;
-    esac
-}
-
-ensure_dirs() {
-    mkdir -p "$INSTALL_ROOT" "$BACKUP_DIR"
-    chmod 700 "$INSTALL_ROOT"
-}
-
-validate_positive_int() {
-    local label="$1"
-    local value="$2"
-    if ! [[ "$value" =~ ^[0-9]+$ ]] || [ "$value" -le 0 ]; then
-        log_error "${label} must be a positive integer, got: ${value}"
-        exit 1
-    fi
-}
-
-validate_install_request() {
-    if [ -z "$PANEL_URL" ]; then
-        log_error "Panel URL is required"
-        exit 1
-    fi
-    if [ -z "$TOKEN" ]; then
-        log_error "Token is required"
-        exit 1
-    fi
-    if ! [[ "$HEALTH_PORT" =~ ^[0-9]+$ ]]; then
-        log_error "health-port must be a non-negative integer"
-        exit 1
-    fi
-    if [ "$HEALTH_PORT" -eq 0 ]; then
-        HEALTH_ENABLED=0
-    fi
-    case "$KERNEL_TYPE" in
-        singbox|xray) ;;
-        *)
-            log_error "Kernel must be singbox or xray"
-            exit 1
-            ;;
-    esac
-    case "$MODE" in
-        node)
-            validate_positive_int "Node ID" "$NODE_ID"
-            ;;
-        machine)
-            validate_positive_int "Machine ID" "$MACHINE_ID"
-            ;;
-    esac
-}
-
-detect_current_state() {
-    local has_binary=0 has_config=0 has_service=0
-    [ -x "$BINARY_PATH" ] && has_binary=1
-    [ -f "$CONFIG_FILE" ] && has_config=1
-    [ -f "$SERVICE_PATH" ] && has_service=1
-
-    if [ "$has_binary" -eq 0 ] && [ "$has_config" -eq 0 ] && [ "$has_service" -eq 0 ]; then
-        CURRENT_STATE="fresh"
-    elif [ "$has_binary" -eq 1 ] && [ "$has_config" -eq 1 ] && [ "$has_service" -eq 1 ]; then
-        CURRENT_STATE="installed"
-    else
-        CURRENT_STATE="partial"
-    fi
-}
-
-require_reconfigure_confirmation() {
-    return
-}
-
-select_binary_source() {
-    if [ -n "$BINARY_SOURCE" ]; then
-        if [ ! -f "$BINARY_SOURCE" ]; then
-            log_error "Binary source not found: $BINARY_SOURCE"
-            exit 1
-        fi
-        echo "$BINARY_SOURCE"
-        return
-    fi
-    if [ -f "./corade" ]; then
-        echo "./corade"
-        return
-    fi
-    if [ -f "./corade-linux-${ARCH}" ]; then
-        echo "./corade-linux-${ARCH}"
-        return
-    fi
-    echo ""
-}
-
-resolve_download_url() {
-    local artifact="$1"
-    if [ "$RELEASE_VERSION" = "latest" ]; then
-        DOWNLOAD_URL="${DEFAULT_DOWNLOAD_BASE}/latest/download/${artifact}"
-    else
-        DOWNLOAD_URL="${DEFAULT_DOWNLOAD_BASE}/download/${RELEASE_VERSION}/${artifact}"
-    fi
+  fi
+  if ! curl --fail --location --silent --show-error --retry 3 "${base_url}/${ARTIFACT}.sha256" -o "${TMP_DIR}/${ARTIFACT}.sha256"; then
+    return 1
+  fi
+  verify_staged_download || return 1
+  mv "${TMP_DIR}/${ARTIFACT}" "$STAGED_BINARY"
 }
 
 stage_binary() {
-    local staged="$TMP_DIR/corade"
-    local local_src
-    local_src=$(select_binary_source)
-    if [ -n "$local_src" ]; then
-        log_step "Using local binary: ${local_src}"
-        cp "$local_src" "$staged"
-    else
-        resolve_download_url "corade-linux-${ARCH}"
-        log_step "Downloading binary: ${DOWNLOAD_URL}"
-        if ! github_curl_download "$DOWNLOAD_URL" "$staged"; then
-            log_error "Failed to download binary from ${DOWNLOAD_URL}"
-            if [ -z "${GITHUB_TOKEN:-}" ]; then
-                log_error "GITHUB_TOKEN is not set; private GitHub releases require authentication"
-            fi
-            exit 1
-        fi
+  if [ -n "$BINARY_SOURCE" ]; then
+    [ -f "$BINARY_SOURCE" ] || fail "binary not found: $BINARY_SOURCE"
+    cp "$BINARY_SOURCE" "$STAGED_BINARY"
+  else
+    if [ -n "$CONTROL_URL" ]; then
+      log "downloading the verified Agent binary from CPanel"
+      if try_download "${CONTROL_URL%/}/corade-downloads"; then
+        chmod 755 "$STAGED_BINARY"
+        "$STAGED_BINARY" -v >/dev/null 2>&1 || fail "downloaded binary failed its version check"
+        return
+      fi
+      log "CPanel artifact is unavailable; falling back to GitHub release"
     fi
-    chmod +x "$staged"
-    if ! "$staged" -v >/dev/null 2>&1; then
-        log_error "Downloaded binary failed version check"
-        exit 1
-    fi
+    log "downloading ${REPOSITORY} release ${VERSION}"
+    try_download "https://github.com/${REPOSITORY}/releases/download/${VERSION}" || fail "could not download a verified Agent binary"
+  fi
+  chmod 755 "$STAGED_BINARY"
+  "$STAGED_BINARY" -v >/dev/null 2>&1 || fail "downloaded binary failed its version check"
 }
 
-stage_coradectl() {
-    local staged="$TMP_DIR/coradectl"
-    local local_src=""
-    if [ -n "$CLI_BINARY_SOURCE" ]; then
-        if [ ! -f "$CLI_BINARY_SOURCE" ]; then
-            log_error "coradectl binary source not found: $CLI_BINARY_SOURCE"
-            exit 1
-        fi
-        local_src="$CLI_BINARY_SOURCE"
-    elif [ -f "./coradectl" ]; then
-        local_src="./coradectl"
-    elif [ -f "./coradectl-linux-${ARCH}" ]; then
-        local_src="./coradectl-linux-${ARCH}"
-    fi
-    if [ -n "$local_src" ]; then
-        log_step "Using local coradectl binary: ${local_src}"
-        cp "$local_src" "$staged"
-    else
-        resolve_download_url "coradectl-linux-${ARCH}"
-        log_step "Downloading coradectl: ${DOWNLOAD_URL}"
-        if ! github_curl_download "$DOWNLOAD_URL" "$staged"; then
-            log_error "Failed to download coradectl from ${DOWNLOAD_URL}"
-            if [ -z "${GITHUB_TOKEN:-}" ]; then
-                log_error "GITHUB_TOKEN is not set; private GitHub releases require authentication"
-            fi
-            exit 1
-        fi
-    fi
-    chmod +x "$staged"
-    if ! "$staged" version > /dev/null 2>&1; then
-        log_error "Downloaded coradectl failed version check"
-        exit 1
-    fi
+service_is_healthy() {
+  systemctl is-active --quiet "$SERVICE_NAME" || return 1
+  if [ "$HEALTH_PORT" != "0" ]; then
+    curl --fail --silent "http://127.0.0.1:${HEALTH_PORT}/healthz" >/dev/null 2>&1 || return 1
+  fi
 }
 
-render_config() {
-    local init_args=(
-        config init
-        --mode "$MODE"
-        --panel-url "$PANEL_URL"
-        --kernel "${KERNEL_TYPE:-singbox}"
-        --health-port "${HEALTH_PORT:-0}"
-        --token "$TOKEN"
-        --version "$RELEASE_VERSION"
-        --output "$TMP_DIR/config.yml"
-        --credentials-out "$TMP_DIR/credentials.env"
-        --meta "$TMP_DIR/install-meta.json"
-        --install-root "$INSTALL_ROOT"
-    )
-    if [ -f "$CONFIG_FILE" ]; then
-        init_args+=(--config "$CONFIG_FILE")
+wait_until_healthy() {
+  for _ in $(seq 1 30); do
+    if service_is_healthy; then
+      return 0
     fi
-    if [ -f "$CREDENTIALS_FILE" ]; then
-        init_args+=(--credentials-in "$CREDENTIALS_FILE")
-    fi
-    if [ "$MODE" = "machine" ]; then
-        init_args+=(--machine-id "$MACHINE_ID")
-    else
-        init_args+=(--node-id "$NODE_ID")
-        if [ -n "$NODE_TYPE" ]; then
-            init_args+=(--node-type "$NODE_TYPE")
-        fi
-    fi
-    if [ -n "$RUNTIME_GOMEMLIMIT" ]; then
-        init_args+=(--gomemlimit "$RUNTIME_GOMEMLIMIT")
-    fi
-    if [ -n "$RUNTIME_GOGC" ] && [ "$RUNTIME_GOGC" -gt 0 ] 2>/dev/null; then
-        init_args+=(--gogc "$RUNTIME_GOGC")
-    fi
-
-    local output
-    output=$("$TMP_DIR/coradectl" "${init_args[@]}") || {
-        log_error "coradectl config init failed"
-        exit 1
-    }
-
-    INSTANCE_ID=$(echo "$output" | grep '^INSTANCE_ID=' | cut -d= -f2-)
-    chmod 600 "$TMP_DIR/credentials.env"
+    sleep 1
+  done
+  return 1
 }
 
-render_service() {
-    cat >"$TMP_DIR/${SERVICE_NAME}" <<EOF_UNIT
+install_binary_and_restart() {
+  if [ -f "$BINARY_PATH" ]; then
+    cp "$BINARY_PATH" "$PREVIOUS_BINARY"
+  fi
+  systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+  install -m 755 "$STAGED_BINARY" "$BINARY_PATH"
+  systemctl daemon-reload
+  systemctl enable "$SERVICE_NAME" >/dev/null
+  systemctl restart "$SERVICE_NAME"
+  if wait_until_healthy; then
+    return
+  fi
+  journalctl -u "$SERVICE_NAME" -n 50 --no-pager >&2 || true
+  if [ -f "$PREVIOUS_BINARY" ]; then
+    log "new Agent did not become healthy; restoring the previous binary"
+    install -m 755 "$PREVIOUS_BINARY" "$BINARY_PATH"
+    systemctl restart "$SERVICE_NAME" || true
+  fi
+  fail "Agent did not become healthy"
+}
+
+if [ "$ACTION" = "upgrade" ]; then
+  [ -f "$CONFIG_FILE" ] && [ -f "$ENV_FILE" ] && [ -f "$SERVICE_FILE" ] || fail "Corade is not installed; run install first"
+  HEALTH_PORT=$(awk '/^[[:space:]]*health_port:/ {print $2; exit}' "$CONFIG_FILE")
+  HEALTH_PORT=${HEALTH_PORT:-65530}
+  stage_binary
+  install_binary_and_restart
+  log "upgrade completed"
+  log "service: ${SERVICE_NAME}"
+  exit 0
+fi
+
+[ -n "$CONTROL_URL" ] || fail "--control-url or CORADE_CONTROL_URL is required"
+[ -n "$MACHINE_ID" ] || fail "--machine-id is required"
+[ "${#COMMUNICATION_KEY}" -ge 32 ] || fail "--communication-key or CORADE_AGENT_TOKEN must contain at least 32 characters"
+[[ "$CONTROL_URL" =~ ^https?://[^[:space:]]+$ ]] || fail "control URL must start with http:// or https:// and contain no whitespace"
+[[ "$MACHINE_ID" =~ ^[A-Za-z0-9_-]+$ ]] || fail "machine ID contains unsupported characters"
+[[ "$COMMUNICATION_KEY" =~ ^[A-Za-z0-9_+/=-]+$ ]] || fail "communication key contains unsupported characters"
+[[ "$HEALTH_PORT" =~ ^[0-9]+$ ]] || fail "health port must be a number"
+case "$KERNEL_TYPE" in singbox|xray) ;; *) fail "kernel must be singbox or xray" ;; esac
+
+stage_binary
+mkdir -p "$CONFIG_DIR"
+if [ -f "$CONFIG_FILE" ]; then
+  cp "$CONFIG_FILE" "${CONFIG_FILE}.backup.$(date +%Y%m%d%H%M%S)"
+fi
+
+cat >"${TMP_DIR}/config.yml" <<EOF
+control:
+  mode: "device-platform"
+  url: "${CONTROL_URL%/}"
+  token_env: "CORADE_AGENT_TOKEN"
+  machine_id: "${MACHINE_ID}"
+
+kernel:
+  type: "${KERNEL_TYPE}"
+  log_level: "warn"
+
+log:
+  level: "info"
+  output: "stdout"
+
+health_port: ${HEALTH_PORT}
+EOF
+
+printf 'CORADE_AGENT_TOKEN=%s\n' "$COMMUNICATION_KEY" >"${TMP_DIR}/agent.env"
+chmod 600 "${TMP_DIR}/agent.env"
+
+cat >"${TMP_DIR}/${SERVICE_NAME}" <<EOF
 [Unit]
-Description=Corade Node Backend
+Description=Corade device platform Agent
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=${INSTALL_ROOT}
-EnvironmentFile=-${CREDENTIALS_FILE}
+WorkingDirectory=${CONFIG_DIR}
+EnvironmentFile=${ENV_FILE}
 ExecStart=${BINARY_PATH} -c ${CONFIG_FILE}
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576
 NoNewPrivileges=true
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-EOF_UNIT
-}
+EOF
 
-backup_existing_state() {
-    BACKUP_PATH="${BACKUP_DIR}/$(date +%Y%m%d-%H%M%S)"
-    mkdir -p "$BACKUP_PATH"
-    if [ -x "$BINARY_PATH" ]; then
-        cp "$BINARY_PATH" "$BACKUP_PATH/corade"
-    fi
-    if [ -x "$CLI_PATH" ]; then
-        cp "$CLI_PATH" "$BACKUP_PATH/coradectl"
-    fi
-    if [ -f "$CONFIG_FILE" ]; then
-        cp "$CONFIG_FILE" "$BACKUP_PATH/config.yml"
-    fi
-    if [ -f "$CREDENTIALS_FILE" ]; then
-        cp "$CREDENTIALS_FILE" "$BACKUP_PATH/credentials.env"
-    fi
-    if [ -f "$INSTALL_META" ]; then
-        cp "$INSTALL_META" "$BACKUP_PATH/install-meta.json"
-    fi
-    if [ -f "$SERVICE_PATH" ]; then
-        cp "$SERVICE_PATH" "$BACKUP_PATH/${SERVICE_NAME}"
-        SERVICE_EXISTED=1
-    else
-        SERVICE_EXISTED=0
-    fi
-}
+install -m 600 "${TMP_DIR}/config.yml" "$CONFIG_FILE"
+install -m 600 "${TMP_DIR}/agent.env" "$ENV_FILE"
+install -m 644 "${TMP_DIR}/${SERVICE_NAME}" "$SERVICE_FILE"
+install_binary_and_restart
 
-stop_existing_service() {
-    if [ -f "$SERVICE_PATH" ] || systemctl is-active "$SERVICE_NAME" >/dev/null 2>&1; then
-        systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-    fi
-}
-
-install_staged_files() {
-    stop_existing_service
-    install -m 755 "$TMP_DIR/corade" "$BINARY_PATH"
-    install -m 600 "$TMP_DIR/config.yml" "$CONFIG_FILE"
-    install -m 600 "$TMP_DIR/credentials.env" "$CREDENTIALS_FILE"
-    install -m 644 "$TMP_DIR/install-meta.json" "$INSTALL_META"
-    if [ -f "$0" ] && [ "$(realpath "$0")" != "$(realpath "$INSTALLER_COPY_PATH" 2>/dev/null || echo "$INSTALLER_COPY_PATH")" ]; then
-        install -m 755 "$0" "$INSTALLER_COPY_PATH"
-    fi
-    install -m 755 "$TMP_DIR/coradectl" "$CLI_PATH"
-    ln -sf "$CLI_PATH" /usr/bin/coradectl 2>/dev/null || true
-    install -m 644 "$TMP_DIR/${SERVICE_NAME}" "$SERVICE_PATH"
-    systemctl daemon-reload
-    systemctl enable "$SERVICE_NAME" > /dev/null 2>&1
-}
-
-wait_for_health() {
-    if ! systemctl is-active "$SERVICE_NAME" >/dev/null 2>&1; then
-        return 1
-    fi
-    if [ "$HEALTH_ENABLED" -eq 0 ]; then
-        return 0
-    fi
-    local attempt=0
-    local max_attempts=30
-    while [ "$attempt" -lt "$max_attempts" ]; do
-        if ! systemctl is-active "$SERVICE_NAME" >/dev/null 2>&1; then
-            return 1
-        fi
-        if curl -fsS "http://127.0.0.1:${HEALTH_PORT}/healthz" >/dev/null 2>&1; then
-            return 0
-        fi
-        sleep 1
-        attempt=$((attempt + 1))
-    done
-    return 1
-}
-
-show_recent_logs() {
-    if command -v journalctl >/dev/null 2>&1; then
-        journalctl -u "$SERVICE_NAME" -n 30 --no-pager || true
-    fi
-}
-
-start_service() {
-    if systemctl is-enabled "$SERVICE_NAME" >/dev/null 2>&1; then
-        systemctl restart "$SERVICE_NAME"
-    else
-        systemctl start "$SERVICE_NAME"
-    fi
-    if ! wait_for_health; then
-        log_error "Service failed health check"
-        show_recent_logs
-        return 1
-    fi
-}
-
-perform_install() {
-    validate_install_request
-    detect_current_state
-    require_reconfigure_confirmation
-    TMP_DIR=$(mktemp -d)
-    ensure_dirs
-    stage_binary
-    stage_coradectl
-    render_config
-    render_service
-    backup_existing_state
-    install_staged_files
-    start_service
-
-    log_info "Installation succeeded"
-    log_info "Service: ${SERVICE_NAME}"
-    log_info "Config: ${CONFIG_FILE}"
-    log_info "Credentials: ${CREDENTIALS_FILE}"
-    if [ "$HEALTH_ENABLED" -eq 1 ]; then
-        log_info "Health: http://127.0.0.1:${HEALTH_PORT}/healthz"
-    fi
-    log_info "CLI: ${CLI_PATH}  (run '${CLI_PATH} list' if coradectl is not in PATH)"
-}
-
-perform_upgrade() {
-    detect_current_state
-    if [ "$CURRENT_STATE" = "fresh" ]; then
-        log_warn "No existing install found; falling back to install"
-        perform_install
-        return
-    fi
-    TMP_DIR=$(mktemp -d)
-    ensure_dirs
-    stage_binary
-    stage_coradectl
-    render_service
-    backup_existing_state
-    install -m 755 "$TMP_DIR/corade" "$BINARY_PATH"
-    install -m 755 "$TMP_DIR/coradectl" "$CLI_PATH"
-    ln -sf "$CLI_PATH" /usr/bin/coradectl 2>/dev/null || true
-    install -m 644 "$TMP_DIR/${SERVICE_NAME}" "$SERVICE_PATH"
-    systemctl daemon-reload
-    systemctl restart "$SERVICE_NAME"
-    if ! wait_for_health; then
-        log_error "Upgrade health check failed"
-        show_recent_logs
-        return 1
-    fi
-    log_info "Upgrade succeeded"
-}
-
-confirm_uninstall() {
-    if [ "$YES" -eq 1 ]; then
-        return
-    fi
-    echo
-    read -r -p "Proceed with uninstall? [y/N]: " answer
-    if ! [[ "$answer" =~ ^[Yy]$ ]]; then
-        log_warn "Uninstall cancelled"
-        exit 0
-    fi
-}
-
-perform_uninstall() {
-    confirm_uninstall
-    if [ -f "$SERVICE_PATH" ]; then
-        systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-        systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
-        rm -f "$SERVICE_PATH"
-        systemctl daemon-reload || true
-    fi
-    rm -f "$BINARY_PATH"
-    rm -f "$CLI_PATH"
-    rm -f /usr/bin/coradectl 2>/dev/null || true
-    if [ "$PURGE" -eq 1 ]; then
-        rm -rf "$INSTALL_ROOT"
-        log_info "Removed ${INSTALL_ROOT}"
-    else
-        rm -f "$INSTALL_META"
-        log_info "Config preserved under ${INSTALL_ROOT}"
-    fi
-    log_info "Uninstall complete"
-}
-
-perform_status() {
-    detect_current_state
-    echo
-    echo -e "${BOLD}Corade install status${NC}"
-    echo "  state:   ${CURRENT_STATE}"
-    if [ -f "$INSTALL_META" ]; then
-        echo "  meta:    ${INSTALL_META}"
-        if [ -x "$CLI_PATH" ]; then
-            "$CLI_PATH" list 2>/dev/null || true
-        else
-            # Simple key extraction from JSON (no Python needed)
-            local val
-            for key in config_mode version latest_instance_id instance_count updated_at; do
-                val=$(sed -n "s/.*\"${key}\": *\"\{0,1\}\([^\"]*\)\"\{0,1\}.*/\1/p" "$INSTALL_META" | head -1)
-                val="${val%,}"  # strip trailing comma from numeric JSON values
-                [ -n "$val" ] && echo "  ${key}: ${val}"
-            done
-        fi
-    fi
-    if [ -f "$SERVICE_PATH" ]; then
-        echo "  service: ${SERVICE_NAME}"
-        systemctl status "$SERVICE_NAME" --no-pager || true
-    fi
-}
-
-main() {
-    parse_args "$@"
-    case "$ACTION" in
-        help)
-            usage
-            exit 0
-            ;;
-        status)
-            ensure_systemd
-            perform_status
-            exit 0
-            ;;
-    esac
-
-    check_root
-    detect_arch
-    detect_os
-    ensure_systemd
-    install_dependencies
-
-    case "$ACTION" in
-        install)
-            perform_install
-            ;;
-        upgrade)
-            perform_upgrade
-            ;;
-        uninstall)
-            perform_uninstall
-            ;;
-        *)
-            log_error "Unknown action: $ACTION"
-            usage
-            exit 1
-            ;;
-    esac
-}
-
-main "$@"
+log "installation completed"
+log "service: ${SERVICE_NAME}"
+log "config: ${CONFIG_FILE}"
+log "logs: journalctl -u ${SERVICE_NAME} -f"

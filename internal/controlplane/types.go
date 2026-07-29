@@ -3,7 +3,7 @@ package controlplane
 import (
 	"context"
 
-	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/model"
 )
 
 type EventType string

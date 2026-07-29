@@ -1,8 +1,8 @@
 package model
 
 import (
-	"github.com/ClaraCora/coradem/internal/config"
-	"github.com/ClaraCora/coradem/internal/panel"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/panel"
 )
 
 func NodeSpecFromPanel(nc *panel.NodeConfig) *NodeSpec {

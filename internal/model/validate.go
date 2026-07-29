@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ClaraCora/coradem/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/config"
 )
 
 func ValidateNodeSpec(n *NodeSpec, kcfg config.KernelConfig) error {

@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ClaraCora/coradem/internal/config"
-	"github.com/ClaraCora/coradem/internal/controlplane"
-	"github.com/ClaraCora/coradem/internal/model"
-	"github.com/ClaraCora/coradem/internal/monitor"
-	"github.com/ClaraCora/coradem/internal/nlog"
-	"github.com/ClaraCora/coradem/internal/panel"
-	"github.com/ClaraCora/coradem/internal/service"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/controlplane"
+	"github.com/ClaraCora/CPanelde/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/monitor"
+	"github.com/ClaraCora/CPanelde/internal/nlog"
+	"github.com/ClaraCora/CPanelde/internal/panel"
+	"github.com/ClaraCora/CPanelde/internal/service"
 )
 
 // nodeHandle tracks a running node service.

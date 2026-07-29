@@ -14,10 +14,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ClaraCora/coradem/internal/config"
-	"github.com/ClaraCora/coradem/internal/machine"
-	"github.com/ClaraCora/coradem/internal/nlog"
-	"github.com/ClaraCora/coradem/internal/service"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/deviceplatform"
+	"github.com/ClaraCora/CPanelde/internal/nlog"
+	"github.com/ClaraCora/CPanelde/internal/service"
 )
 
 var (
@@ -157,44 +157,23 @@ func runWithReload(initialRoot *config.RootConfig, configPath string) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if instanceCfg.IsMachineMode() {
-					nlog.Core().Info("starting machine instance", "instance", instanceCfg.InstanceID, "machine_id", instanceCfg.Machine.MachineID, "panel_url", instanceCfg.Panel.URL)
-					orch := machine.New(instanceCfg)
+				if instanceCfg.IsDevicePlatform() {
+					nlog.Core().Info("starting device platform instance", "instance", instanceCfg.InstanceID, "control_url", instanceCfg.Control.URL)
+					orch := deviceplatform.New(instanceCfg, version)
 					if err := orch.Run(ctx); err != nil {
-						nlog.Core().Error("machine instance exited with error", "instance", instanceCfg.InstanceID, "error", err)
+						nlog.Core().Error("device platform instance exited with error", "instance", instanceCfg.InstanceID, "error", err)
 						errCh <- err
 						cancel()
 					}
 					return
 				}
-				nodes := instanceCfg.ExpandNodes()
-				nlog.Core().Info("starting node instance", "instance", instanceCfg.InstanceID, "nodes", len(nodes), "panel_url", instanceCfg.Panel.URL)
-				var instanceWG sync.WaitGroup
-				for idx, nodeCfg := range nodes {
-					nodeCfg := nodeCfg
-					instanceWG.Add(1)
-					go func(idx int) {
-						defer instanceWG.Done()
-						if idx > 0 {
-							delay := time.Duration(idx) * 250 * time.Millisecond
-							if delay > 2*time.Second {
-								delay = 2 * time.Second
-							}
-							select {
-							case <-time.After(delay):
-							case <-ctx.Done():
-								return
-							}
-						}
-						svc := service.New(nodeCfg)
-						if err := svc.Run(ctx); err != nil {
-							nlog.Core().Error("node service exited with error", "instance", nodeCfg.InstanceID, "node_id", nodeCfg.Panel.NodeID, "error", err)
-							errCh <- err
-							cancel()
-						}
-					}(idx)
+				nlog.Core().Info("starting standalone instance", "instance", instanceCfg.InstanceID)
+				svc := service.New(instanceCfg)
+				if err := svc.Run(ctx); err != nil {
+					nlog.Core().Error("standalone instance exited with error", "instance", instanceCfg.InstanceID, "error", err)
+					errCh <- err
+					cancel()
 				}
-				instanceWG.Wait()
 			}()
 		}
 		go func() { wg.Wait(); close(doneCh) }()

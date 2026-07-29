@@ -1,6 +1,6 @@
 package model
 
-import "github.com/ClaraCora/coradem/internal/config"
+import "github.com/ClaraCora/CPanelde/internal/config"
 
 func NodeSpecFromStandalone(cfg *config.Config) *NodeSpec {
 	sc := cfg.Standalone

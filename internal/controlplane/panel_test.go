@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ClaraCora/coradem/internal/config"
-	panelapi "github.com/ClaraCora/coradem/internal/panel"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	panelapi "github.com/ClaraCora/CPanelde/internal/panel"
 )
 
 func TestPanelControlPlaneInitialRejectsInvalidCustomOutbounds(t *testing.T) {

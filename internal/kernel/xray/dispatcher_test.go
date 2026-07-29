@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/model"
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/transport"
 )

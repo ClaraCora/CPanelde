@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ClaraCora/coradem/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/config"
 	"github.com/sagernet/sing-box/adapter"
 	singM "github.com/sagernet/sing/common/metadata"
 	"golang.org/x/time/rate"

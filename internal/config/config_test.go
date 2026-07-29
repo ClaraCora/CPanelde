@@ -542,3 +542,85 @@ func TestInheritFrom_AutoTLSInheritedWhenChildHasNoCertConfig(t *testing.T) {
 		t.Error("auto_tls should be inherited when child has no cert config")
 	}
 }
+
+func TestLoad_DevicePlatformWithTokenEnv(t *testing.T) {
+	t.Setenv("TEST_CORADE_AGENT_TOKEN", "agent-secret")
+	path := writeTemp(t, `
+control:
+  mode: device-platform
+  url: https://devices.example.com
+  token_env: TEST_CORADE_AGENT_TOKEN
+  machine_id: mch_test
+kernel:
+  type: singbox
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.IsDevicePlatform() || cfg.Control.Token != "agent-secret" {
+		t.Fatalf("unexpected control config: %+v", cfg.Control)
+	}
+	id1, err := cfg.AutoInstanceID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := cfg.AutoInstanceID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id1 != id2 {
+		t.Fatalf("device platform instance id is not stable: %q != %q", id1, id2)
+	}
+}
+
+func TestLoad_DevicePlatformRejectsLegacySettings(t *testing.T) {
+	path := writeTemp(t, `
+control:
+  mode: device-platform
+  url: https://devices.example.com
+  token: agent-secret
+panel:
+  url: https://legacy.example.com
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected device platform and legacy settings conflict")
+	}
+}
+
+func TestLoad_RejectsUnknownControlMode(t *testing.T) {
+	path := writeTemp(t, `
+control:
+  mode: legacy
+  url: https://devices.example.com
+  token: agent-secret
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected unknown control mode error")
+	}
+}
+
+func TestLoad_StandaloneRejectsLegacyPanelSettings(t *testing.T) {
+	path := writeTemp(t, `
+standalone:
+  enabled: true
+  node:
+    protocol: vless
+    server_port: 8443
+  users:
+    - id: 1
+      uuid: 11111111-1111-1111-1111-111111111111
+panel:
+  url: https://legacy.example.com
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected standalone and legacy panel settings conflict")
+	}
+}
+
+func TestValidateStartupLayoutRejectsLegacyRuntime(t *testing.T) {
+	cfg := &Config{InstanceID: "legacy", Panel: PanelConfig{URL: "https://legacy.example.com", Token: "token", NodeID: 1}}
+	if err := ValidateStartupLayout([]*Config{cfg}); err == nil {
+		t.Fatal("expected legacy runtime rejection")
+	}
+}

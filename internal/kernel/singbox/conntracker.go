@@ -15,7 +15,7 @@ import (
 	N "github.com/sagernet/sing/common/network"
 	"golang.org/x/time/rate"
 
-	"github.com/ClaraCora/coradem/internal/nlog"
+	"github.com/ClaraCora/CPanelde/internal/nlog"
 )
 
 // ipPool caches ipSnapshot maps to reduce allocations.

@@ -3,7 +3,7 @@ package controlplane
 import (
 	"sync"
 
-	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/model"
 )
 
 // MailboxState is the coalesced snapshot drained from a NodeMailbox.

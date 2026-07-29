@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ClaraCora/coradem/internal/config"
-	"github.com/ClaraCora/coradem/internal/panel"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/panel"
 )
 
 func TestNodeSpecFromPanelValidated(t *testing.T) {

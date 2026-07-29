@@ -3,7 +3,7 @@ package controlplane
 import (
 	"testing"
 
-	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/model"
 )
 
 func TestNodeMailboxLatestStateAndNotifyCollapse(t *testing.T) {

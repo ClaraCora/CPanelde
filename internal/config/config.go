@@ -13,13 +13,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ClaraCora/coradem/internal/nlog"
+	"github.com/ClaraCora/CPanelde/internal/nlog"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
 	InstanceID string        `yaml:"-"`
+	Control    ControlConfig `yaml:"control"`
 	Panel      PanelConfig   `yaml:"panel"`
 	Node       NodeConfig    `yaml:"node"`
 	Kernel     KernelConfig  `yaml:"kernel"`
@@ -42,6 +43,14 @@ type Config struct {
 	// via GET /api/v2/server/machine/nodes. When set, Panel.NodeID, Nodes
 	// and Panel.Token are ignored; the machine token is used instead.
 	Machine *MachineConfig `yaml:"machine,omitempty"`
+}
+
+type ControlConfig struct {
+	Mode      string `yaml:"mode"`
+	URL       string `yaml:"url"`
+	Token     string `yaml:"token,omitempty"`
+	TokenEnv  string `yaml:"token_env,omitempty"`
+	MachineID string `yaml:"machine_id,omitempty"`
 }
 
 // MachineConfig identifies this process as a panel-managed machine that
@@ -390,6 +399,14 @@ func envFirst(names ...string) string {
 }
 
 func (c *Config) applyEnvOverrides() {
+	if v := envFirst("CORADE_CONTROL_URL"); v != "" {
+		c.Control.URL = v
+		c.Control.Mode = "device-platform"
+	}
+	if v := envFirst("CORADE_AGENT_TOKEN"); v != "" {
+		c.Control.Token = v
+		c.Control.Mode = "device-platform"
+	}
 	if v := envFirst("apiHost", "API_HOST"); v != "" {
 		c.Panel.URL = v
 	}
@@ -437,6 +454,9 @@ func (c *Config) applyEnvOverrides() {
 }
 
 func (c *Config) resolveEnvRefs() {
+	if c.Control.Token == "" && c.Control.TokenEnv != "" {
+		c.Control.Token = os.Getenv(c.Control.TokenEnv)
+	}
 	if c.Panel.Token == "" && c.Panel.TokenEnv != "" {
 		c.Panel.Token = os.Getenv(c.Panel.TokenEnv)
 	}
@@ -451,6 +471,21 @@ func (c *Config) resolveEnvRefs() {
 // Fields that must be unique per instance (config_dir, cert_dir, instance_id)
 // are intentionally excluded.
 func (c *Config) inheritFrom(parent *Config) {
+	if c.Control.Mode == "" {
+		c.Control.Mode = parent.Control.Mode
+	}
+	if c.Control.URL == "" {
+		c.Control.URL = parent.Control.URL
+	}
+	if c.Control.Token == "" {
+		c.Control.Token = parent.Control.Token
+	}
+	if c.Control.TokenEnv == "" {
+		c.Control.TokenEnv = parent.Control.TokenEnv
+	}
+	if c.Control.MachineID == "" {
+		c.Control.MachineID = parent.Control.MachineID
+	}
 	// Log
 	if c.Log.Level == "" {
 		c.Log.Level = parent.Log.Level
@@ -554,6 +589,9 @@ func (c *Config) inheritFrom(parent *Config) {
 }
 
 func (c *Config) setDefaultsFrom(baseDir string) {
+	if c.Control.Mode == "" && (c.Control.URL != "" || c.Control.Token != "" || c.Control.TokenEnv != "") {
+		c.Control.Mode = "device-platform"
+	}
 	if c.Kernel.Type == "" {
 		c.Kernel.Type = "singbox"
 	}
@@ -607,6 +645,10 @@ func (c *Config) IsMachineMode() bool {
 	return c.Machine != nil && c.Machine.MachineID > 0
 }
 
+func (c *Config) IsDevicePlatform() bool {
+	return strings.EqualFold(strings.TrimSpace(c.Control.Mode), "device-platform")
+}
+
 func (c *Config) AutoInstanceID() (string, error) {
 	mode := "node"
 	target := "0"
@@ -615,6 +657,11 @@ func (c *Config) AutoInstanceID() (string, error) {
 		mode = "standalone"
 		target = "local"
 		baseURL = "standalone"
+	} else if c.IsDevicePlatform() {
+		mode = "device-platform"
+		baseURL = strings.TrimSpace(c.Control.URL)
+		sum := sha1.Sum([]byte(c.Control.Token))
+		target = hex.EncodeToString(sum[:])[:8]
 	} else if c.IsMachineMode() {
 		mode = "machine"
 		target = strconv.Itoa(c.Machine.MachineID)
@@ -688,9 +735,30 @@ func normalizeBaseURL(raw string) (string, string, error) {
 }
 
 func (c *Config) validate() error {
+	mode := strings.ToLower(strings.TrimSpace(c.Control.Mode))
+	if mode != "" && mode != "device-platform" {
+		return fmt.Errorf("control.mode must be 'device-platform', got %q", c.Control.Mode)
+	}
+	if c.IsStandalone() && (mode != "" || c.Control.URL != "" || c.Control.Token != "" || c.Control.TokenEnv != "" ||
+		c.Panel.URL != "" || c.Panel.Token != "" || c.Panel.TokenEnv != "" || c.Panel.NodeID > 0 || c.Panel.NodeType != "" || c.Machine != nil) {
+		return fmt.Errorf("standalone mode cannot be combined with control, panel, or machine settings")
+	}
 	if c.IsStandalone() {
 		if err := c.validateStandalone(); err != nil {
 			return err
+		}
+	} else if c.IsDevicePlatform() {
+		if strings.TrimSpace(c.Control.URL) == "" {
+			return fmt.Errorf("control.url is required")
+		}
+		if strings.TrimSpace(c.Control.Token) == "" {
+			return fmt.Errorf("control.token or control.token_env is required")
+		}
+		if strings.TrimSpace(c.Control.MachineID) == "" {
+			return fmt.Errorf("control.machine_id is required")
+		}
+		if len(c.Nodes) > 0 || c.Machine != nil || c.Panel.URL != "" || c.Panel.Token != "" || c.Panel.TokenEnv != "" || c.Panel.NodeID > 0 || c.Panel.NodeType != "" {
+			return fmt.Errorf("control.mode device-platform cannot be combined with legacy panel, machine, or nodes settings")
 		}
 	} else if c.IsMachineMode() {
 		if c.Panel.URL == "" {
@@ -810,6 +878,20 @@ func (c *Config) ExpandMachineNode(nodeID int, nodeType string) *Config {
 	return &nodeCfg
 }
 
+func (c *Config) ExpandDevicePlatformNode(nodeID int, nodeType string) *Config {
+	nodeCfg := *c
+	nodeCfg.Nodes = nil
+	nodeCfg.Machine = nil
+	nodeCfg.Panel = PanelConfig{NodeID: nodeID, NodeType: nodeType}
+
+	nodeCfg.Kernel.ConfigDir = fmt.Sprintf("%s/node-%d", c.Kernel.ConfigDir, nodeID)
+	if nodeCfg.Kernel.GeoDataDir == c.Kernel.ConfigDir {
+		nodeCfg.Kernel.GeoDataDir = c.Kernel.GeoDataDir
+	}
+	nodeCfg.Cert.CertDir = filepath.Join(nodeCfg.Kernel.ConfigDir, "certs")
+	return &nodeCfg
+}
+
 func InitLogger(cfg LogConfig) {
 	var minLevel slog.Level
 	switch cfg.Level {
@@ -866,6 +948,9 @@ func ValidateStartupLayout(instances []*Config) error {
 		if instance == nil {
 			continue
 		}
+		if !instance.IsStandalone() && !instance.IsDevicePlatform() {
+			return fmt.Errorf("instance %s uses a legacy panel runtime; corade only supports control.mode=device-platform or standalone mode", instance.InstanceID)
+		}
 		owner := instance.InstanceID
 		if instance.HealthPort > 0 {
 			if other, ok := healthPorts[instance.HealthPort]; ok {
@@ -881,7 +966,7 @@ func ValidateStartupLayout(instances []*Config) error {
 		}
 		// Machine mode discovers nodes dynamically — skip static binding check,
 		// but still validate custom_config if set at the instance level.
-		if instance.IsMachineMode() {
+		if instance.IsMachineMode() || instance.IsDevicePlatform() {
 			if path := strings.TrimSpace(instance.Kernel.CustomConfig); path != "" {
 				if _, err := os.Stat(path); err != nil {
 					return fmt.Errorf("kernel.custom_config %q for %s: %w", path, owner, err)

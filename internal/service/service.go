@@ -14,18 +14,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ClaraCora/coradem/internal/cert"
-	"github.com/ClaraCora/coradem/internal/cert/dnsproviders"
-	"github.com/ClaraCora/coradem/internal/config"
-	"github.com/ClaraCora/coradem/internal/controlplane"
-	"github.com/ClaraCora/coradem/internal/kernel"
-	"github.com/ClaraCora/coradem/internal/kernel/singbox"
-	"github.com/ClaraCora/coradem/internal/kernel/xray"
-	"github.com/ClaraCora/coradem/internal/limiter"
-	"github.com/ClaraCora/coradem/internal/model"
-	"github.com/ClaraCora/coradem/internal/monitor"
-	"github.com/ClaraCora/coradem/internal/nlog"
-	"github.com/ClaraCora/coradem/internal/tracker"
+	"github.com/ClaraCora/CPanelde/internal/cert"
+	"github.com/ClaraCora/CPanelde/internal/cert/dnsproviders"
+	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/controlplane"
+	"github.com/ClaraCora/CPanelde/internal/kernel"
+	"github.com/ClaraCora/CPanelde/internal/kernel/singbox"
+	"github.com/ClaraCora/CPanelde/internal/kernel/xray"
+	"github.com/ClaraCora/CPanelde/internal/limiter"
+	"github.com/ClaraCora/CPanelde/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/monitor"
+	"github.com/ClaraCora/CPanelde/internal/nlog"
+	"github.com/ClaraCora/CPanelde/internal/tracker"
 )
 
 type Service struct {
@@ -120,18 +120,10 @@ func (b *apiBackoff) onFailure() {
 }
 
 func New(cfg *config.Config) *Service {
-	var cp controlplane.ControlPlane
-	if cfg.IsStandalone() {
-		cp = controlplane.NewLocalControlPlane(cfg)
-	} else {
-		cp = controlplane.NewPanelControlPlane(cfg.Panel, cfg.WS, cfg.Kernel)
-	}
-	return newService(cfg, cp)
+	return newService(cfg, controlplane.NewLocalControlPlane(cfg))
 }
 
-// NewWithControlPlane creates a Service with an externally-provided
-// ControlPlane. Used by the machine orchestrator to inject a
-// MachinePanelControlPlane with WS mux routing.
+// NewWithControlPlane creates a Service with an externally provided control plane.
 func NewWithControlPlane(cfg *config.Config, cp controlplane.ControlPlane) *Service {
 	return newService(cfg, cp)
 }

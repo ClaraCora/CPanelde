@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/model"
 )
 
 func TestNew(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ClaraCora/coradem/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/config"
 )
 
 func TestLocalControlPlaneInitial(t *testing.T) {

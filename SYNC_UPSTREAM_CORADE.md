@@ -28,8 +28,8 @@
 - CLI 路径：[`/usr/local/bin/coradectl`](cmd/xbctl/main.go:29)
 
 ### 3. 远程资源
-- Release 下载源：[`https://github.com/ClaraCora/coradem/releases`](cmd/xbctl/main.go:33)
-- 安装脚本远程地址：[`https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh`](README.md:38)
+- Release 下载源：[`https://github.com/ClaraCora/CPanelde/releases`](cmd/xbctl/main.go:33)
+- 安装脚本远程地址：[`https://raw.githubusercontent.com/ClaraCora/CPanelde/main/install.sh`](README.md:38)
 
 ### 4. 运行时外显要求
 尽量避免安装后在 VPS 终端直接看到上游项目名称：
@@ -165,8 +165,8 @@ git checkout --theirs <file>
 | `/usr/local/bin/xboard-node` | `/usr/local/bin/corade` |
 | `/usr/local/bin/xbctl` | `/usr/local/bin/coradectl` |
 | `xboard-node.service` | `corade.service` |
-| `https://github.com/ClaraCora/coradem/releases` | `https://github.com/ClaraCora/coradem/releases` |
-| `https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh` | `https://raw.githubusercontent.com/ClaraCora/coradem/main/install.sh` |
+| `https://github.com/ClaraCora/CPanelde/releases` | `https://github.com/ClaraCora/CPanelde/releases` |
+| `https://raw.githubusercontent.com/cedar2025/xboard-node/dev/install.sh` | `https://raw.githubusercontent.com/ClaraCora/CPanelde/main/install.sh` |
 
 ### 5.2 需要重点人工复核的文件
 #### [`install.sh`](install.sh)
@@ -235,7 +235,7 @@ grep -RIn 'xboard-node\|xbctl\|cedar2025/xboard-node' \
 ```
 
 注意：
-- import 路径里出现 [`github.com/ClaraCora/coradem`](cmd/corade/main.go:17) 暂时允许
+- import 路径里出现 [`github.com/ClaraCora/CPanelde`](cmd/corade/main.go:17) 暂时允许
 - 这是源码级标识，不是运行时外显问题
 - 不要在这一步强行改 `module` 和 import 路径，除非准备整体重命名 Go module
 
@@ -315,7 +315,7 @@ git checkout --theirs .github/workflows/ci.yml Makefile README.md cmd/corade/mai
 - `/usr/local/bin/xboard-node -> /usr/local/bin/corade`
 - `/usr/local/bin/xbctl -> /usr/local/bin/coradectl`
 - `xboard-node.service -> corade.service`
-- `https://github.com/ClaraCora/coradem/releases -> https://github.com/ClaraCora/coradem/releases`
+- `https://github.com/ClaraCora/CPanelde/releases -> https://github.com/ClaraCora/CPanelde/releases`
 
 7. 再检查残留：
 ```bash
@@ -340,7 +340,7 @@ GIT_SSH_COMMAND='ssh -i /root/.miyao/my_ed25519_key -o IdentitiesOnly=yes -o Str
 ### 不要做的事
 - 不要在同步上游时优先保留旧版 [`install.sh`](install.sh)
 - 不要在未确认测试通过前直接推送
-- 不要把源码 import 路径中的 [`github.com/ClaraCora/coradem`](cmd/corade/main.go:17) 当作第一优先级处理
+- 不要把源码 import 路径中的 [`github.com/ClaraCora/CPanelde`](cmd/corade/main.go:17) 当作第一优先级处理
 - 不要把“运行时外显清理”和“Go module 改名”混为一谈
 
 ### 建议优先级

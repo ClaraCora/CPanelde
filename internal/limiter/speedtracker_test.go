@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ClaraCora/coradem/internal/model"
+	"github.com/ClaraCora/CPanelde/internal/model"
 )
 
 func TestSpeedTracker_UpdateBuckets(t *testing.T) {
