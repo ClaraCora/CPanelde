@@ -86,3 +86,6 @@ jobs:
           else
             gh release create latest dist/* --title "Latest CPanelde Agent build" --prerelease --notes "Automatically built from main at ${GITHUB_SHA}."
           fi
+          for asset in coradectl-linux-amd64 coradectl-linux-arm64; do
+            gh release delete-asset latest "$asset" --yes >/dev/null 2>&1 || true
+          done
