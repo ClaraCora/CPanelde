@@ -198,6 +198,16 @@ type Heartbeat struct {
 	Metrics      map[string]any `json:"metrics"`
 }
 
+type AgentCommand struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+}
+
+type HeartbeatResponse struct {
+	Accepted bool           `json:"accepted"`
+	Commands []AgentCommand `json:"commands"`
+}
+
 type TelemetryBatch struct {
 	Events []TelemetryEvent `json:"events"`
 }

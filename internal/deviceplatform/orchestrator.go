@@ -41,12 +41,14 @@ type Orchestrator struct {
 	pullInterval      int
 	heartbeatInterval time.Duration
 	cursor            atomic.Int64
+	scheduleUpgrade   func(context.Context, string) error
 }
 
 func New(cfg *config.Config, version string) *Orchestrator {
 	return &Orchestrator{
 		cfg: cfg, version: version, client: platformclient.New(cfg.Control.URL, cfg.Control.Token, cfg.Control.MachineID),
 		nodes: make(map[int]*nodeHandle), statuses: make(map[int]chan<- controlplane.StatusChange),
+		scheduleUpgrade: scheduleAgentUpgrade,
 	}
 }
 
@@ -364,7 +366,7 @@ func (o *Orchestrator) broadcast(change controlplane.StatusChange) {
 
 func (o *Orchestrator) sendHeartbeat(ctx context.Context) {
 	metrics := monitor.Collect()
-	err := o.client.SendHeartbeat(ctx, platformclient.Heartbeat{
+	response, err := o.client.SendHeartbeat(ctx, platformclient.Heartbeat{
 		Version: o.version, Kernel: o.cfg.Kernel.Type,
 		Capabilities: map[string]any{"machine_mode": true, "dynamic_nodes": true, "protocol_version": platformclient.ProtocolVersion},
 		Metrics: map[string]any{
@@ -377,6 +379,27 @@ func (o *Orchestrator) sendHeartbeat(ctx context.Context) {
 	})
 	if err != nil {
 		nlog.Core().Warn("device platform heartbeat failed", "error", err)
+		return
+	}
+	o.handleCommands(ctx, response.Commands)
+}
+
+func (o *Orchestrator) handleCommands(ctx context.Context, commands []platformclient.AgentCommand) {
+	for _, command := range commands {
+		switch command.Type {
+		case "agent.upgrade":
+			if o.scheduleUpgrade == nil {
+				nlog.Core().Error("Agent upgrade scheduler is unavailable", "task_id", command.ID)
+				continue
+			}
+			if err := o.scheduleUpgrade(ctx, command.ID); err != nil {
+				nlog.Core().Error("schedule Agent upgrade", "task_id", command.ID, "error", err)
+				continue
+			}
+			nlog.Core().Info("Agent upgrade scheduled", "task_id", command.ID)
+		default:
+			nlog.Core().Warn("unsupported Agent command", "task_id", command.ID, "type", command.Type)
+		}
 	}
 }
 

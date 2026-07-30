@@ -96,8 +96,10 @@ func (c *Client) Changes(ctx context.Context, cursor string) (ChangesResponse, e
 	return result, err
 }
 
-func (c *Client) SendHeartbeat(ctx context.Context, heartbeat Heartbeat) error {
-	return c.request(ctx, http.MethodPost, "/ca/cc/fwq/xt", heartbeat, nil, nil)
+func (c *Client) SendHeartbeat(ctx context.Context, heartbeat Heartbeat) (HeartbeatResponse, error) {
+	var result HeartbeatResponse
+	err := c.request(ctx, http.MethodPost, "/ca/cc/fwq/xt", heartbeat, nil, &result)
+	return result, err
 }
 
 func (c *Client) SendTelemetry(ctx context.Context, key string, batch TelemetryBatch) error {

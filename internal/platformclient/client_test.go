@@ -35,6 +35,8 @@ func TestClientUsesCACCRoutesAndBearerAuthentication(t *testing.T) {
 			data = map[string]any{"users": []any{map[string]any{"id": 9, "uuid": "user-uuid"}}}
 		case "/ca/cc/bg":
 			data = map[string]any{"changes": []any{}, "next_cursor": "8"}
+		case "/ca/cc/fwq/xt":
+			data = map[string]any{"accepted": true, "commands": []any{map[string]any{"id": "upg_test", "type": "agent.upgrade"}}}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": data, "meta": map[string]any{"request_id": "req_test"}, "error": nil})
@@ -58,8 +60,12 @@ func TestClientUsesCACCRoutesAndBearerAuthentication(t *testing.T) {
 	if _, err := client.Changes(ctx, "7"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.SendHeartbeat(ctx, Heartbeat{Version: "test"}); err != nil {
+	heartbeat, err := client.SendHeartbeat(ctx, Heartbeat{Version: "test"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !heartbeat.Accepted || len(heartbeat.Commands) != 1 || heartbeat.Commands[0].Type != "agent.upgrade" {
+		t.Fatalf("unexpected heartbeat response: %+v", heartbeat)
 	}
 	if err := client.SendTelemetry(ctx, "batch-1", TelemetryBatch{}); err != nil {
 		t.Fatal(err)

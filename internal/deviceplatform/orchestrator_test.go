@@ -86,3 +86,15 @@ func TestNodeChangeNotifiesOnlyTargetNode(t *testing.T) {
 		t.Fatalf("cursor = %q, want 6", got)
 	}
 }
+
+func TestHandleCommandsSchedulesAgentUpgrade(t *testing.T) {
+	var scheduled string
+	orchestrator := &Orchestrator{scheduleUpgrade: func(_ context.Context, taskID string) error {
+		scheduled = taskID
+		return nil
+	}}
+	orchestrator.handleCommands(context.Background(), []platformclient.AgentCommand{{ID: "upg_test", Type: "agent.upgrade"}})
+	if scheduled != "upg_test" {
+		t.Fatalf("scheduled task = %q, want upg_test", scheduled)
+	}
+}
