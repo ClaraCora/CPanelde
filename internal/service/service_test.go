@@ -25,6 +25,7 @@ type fakeKernel struct {
 	updateCalls int
 	addCalls    int
 	removeCalls int
+	startUsers  []model.UserSpec
 
 	onUpdateUsers func([]model.UserSpec)
 	onAddUsers    func([]model.UserSpec)
@@ -38,8 +39,9 @@ func (f *fakeKernel) Name() string                      { return "fake" }
 func (f *fakeKernel) Protocols() []string               { return []string{"vless"} }
 func (f *fakeKernel) Capabilities() kernel.Capabilities { return kernel.Capabilities{} }
 func (f *fakeKernel) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls kernel.TLSCert) error {
-	_, _, _ = nodeConfig, users, tls
+	_, _ = nodeConfig, tls
 	f.startCalls++
+	f.startUsers = append([]model.UserSpec(nil), users...)
 	if f.startErr != nil {
 		return f.startErr
 	}
@@ -136,6 +138,35 @@ func TestApplyUserUpdatePreparesLimiterBeforeKernelUpdate(t *testing.T) {
 	}
 	if s.speedTracker.GetLimiter("uuid-new") == nil {
 		t.Fatal("expected limiter for new user after successful update")
+	}
+}
+
+func TestApplyUserUpdateStartsStoppedKernelWhenFirstUsersArrive(t *testing.T) {
+	k := &fakeKernel{}
+	s := newTestService(k)
+	s.lastConfig = &model.NodeSpec{Protocol: "vless"}
+	s.updateUserState(nil)
+
+	users := []model.UserSpec{{ID: 1, UUID: "uuid-first", SpeedLimit: 8}}
+	s.applyUserUpdate(context.Background(), users, computeUserHash(users))
+
+	if got := k.startCalls; got != 1 {
+		t.Fatalf("Start call count = %d, want 1", got)
+	}
+	if !k.running {
+		t.Fatal("expected kernel to start when the first users arrive")
+	}
+	if got := k.updateCalls; got != 0 {
+		t.Fatalf("UpdateUsers call count = %d, want 0", got)
+	}
+	if len(k.startUsers) != 1 || k.startUsers[0].UUID != "uuid-first" {
+		t.Fatalf("Start users = %#v, want first user", k.startUsers)
+	}
+	if len(s.lastUsers) != 1 || s.lastUsers[0].UUID != "uuid-first" {
+		t.Fatalf("lastUsers = %#v, want first user", s.lastUsers)
+	}
+	if s.speedTracker.GetLimiter("uuid-first") == nil {
+		t.Fatal("expected limiter for the first user after startup")
 	}
 }
 
