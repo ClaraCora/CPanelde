@@ -12,7 +12,8 @@ ACTION="install"
 CONTROL_URL="${CORADE_CONTROL_URL:-}"
 COMMUNICATION_KEY="${CORADE_AGENT_TOKEN:-}"
 MACHINE_ID=""
-KERNEL_TYPE="singbox"
+PANEL_PUBLIC_KEY=""
+KERNEL_TYPE="xray"
 HEALTH_PORT="65530"
 BINARY_SOURCE=""
 VERSION="latest"
@@ -29,9 +30,10 @@ Required for install:
   --control-url URL            CPanel public URL
   --communication-key KEY     Shared Agent communication key
   --machine-id ID             CPanel server ID
+  --panel-public-key KEY      Pinned CPanel Ed25519 public key
 
 Optional:
-  --kernel singbox|xray       Default kernel type (default: singbox)
+  --kernel singbox|xray       Default kernel type (default: xray)
   --health-port PORT          Local health endpoint (default: 65530)
   --binary PATH               Install a local Corade binary
   --version VERSION           GitHub release tag (default: latest)
@@ -55,6 +57,7 @@ while [ "$#" -gt 0 ]; do
     --control-url) CONTROL_URL="${2:-}"; shift 2 ;;
     --communication-key) COMMUNICATION_KEY="${2:-}"; shift 2 ;;
     --machine-id) MACHINE_ID="${2:-}"; shift 2 ;;
+    --panel-public-key) PANEL_PUBLIC_KEY="${2:-}"; shift 2 ;;
     --kernel) KERNEL_TYPE="${2:-}"; shift 2 ;;
     --health-port) HEALTH_PORT="${2:-}"; shift 2 ;;
     --binary) BINARY_SOURCE="${2:-}"; shift 2 ;;
@@ -103,15 +106,6 @@ stage_binary() {
     [ -f "$BINARY_SOURCE" ] || fail "binary not found: $BINARY_SOURCE"
     cp "$BINARY_SOURCE" "$STAGED_BINARY"
   else
-    if [ -n "$CONTROL_URL" ]; then
-      log "downloading the verified Agent binary from CPanel"
-      if try_download "${CONTROL_URL%/}/corade-downloads"; then
-        chmod 755 "$STAGED_BINARY"
-        "$STAGED_BINARY" -v >/dev/null 2>&1 || fail "downloaded binary failed its version check"
-        return
-      fi
-      log "CPanel artifact is unavailable; falling back to GitHub release"
-    fi
     log "downloading ${REPOSITORY} release ${VERSION}"
     try_download "https://github.com/${REPOSITORY}/releases/download/${VERSION}" || fail "could not download a verified Agent binary"
   fi
@@ -173,6 +167,9 @@ fi
 [ "${#COMMUNICATION_KEY}" -ge 32 ] || fail "--communication-key or CORADE_AGENT_TOKEN must contain at least 32 characters"
 [[ "$CONTROL_URL" =~ ^https?://[^[:space:]]+$ ]] || fail "control URL must start with http:// or https:// and contain no whitespace"
 [[ "$MACHINE_ID" =~ ^[A-Za-z0-9_-]+$ ]] || fail "machine ID contains unsupported characters"
+if [ -n "$PANEL_PUBLIC_KEY" ]; then
+  [[ "$PANEL_PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "panel public key is invalid"
+fi
 [[ "$COMMUNICATION_KEY" =~ ^[A-Za-z0-9_+/=-]+$ ]] || fail "communication key contains unsupported characters"
 [[ "$HEALTH_PORT" =~ ^[0-9]+$ ]] || fail "health port must be a number"
 case "$KERNEL_TYPE" in singbox|xray) ;; *) fail "kernel must be singbox or xray" ;; esac
@@ -189,7 +186,13 @@ control:
   url: "${CONTROL_URL%/}"
   token_env: "CORADE_AGENT_TOKEN"
   machine_id: "${MACHINE_ID}"
+EOF
 
+if [ -n "$PANEL_PUBLIC_KEY" ]; then
+  printf '  panel_public_key: "%s"\n' "$PANEL_PUBLIC_KEY" >>"${TMP_DIR}/config.yml"
+fi
+
+cat >>"${TMP_DIR}/config.yml" <<EOF
 kernel:
   type: "${KERNEL_TYPE}"
   log_level: "warn"

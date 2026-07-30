@@ -5,9 +5,10 @@ control:
   url: "https://panel.example.com"
   token_env: "CORADE_AGENT_TOKEN"
   machine_id: "mch_example"
+  panel_public_key: "replace-with-panel-ed25519-public-key"
 
 kernel:
-  type: "singbox"
+  type: "xray"
   log_level: "warn"
 
 log:

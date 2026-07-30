@@ -3,6 +3,7 @@ package deviceplatform
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,7 @@ type Orchestrator struct {
 	version string
 	client  *platformclient.Client
 	stream  *platformclient.Stream
+	initErr error
 
 	mu       sync.Mutex
 	nodes    map[int]*nodeHandle
@@ -45,18 +47,41 @@ type Orchestrator struct {
 }
 
 func New(cfg *config.Config, version string) *Orchestrator {
+	client := platformclient.New(cfg.Control.URL, cfg.Control.Token, cfg.Control.MachineID)
+	initErr := platformclient.ValidateControlEndpoint(cfg.Control.URL)
+	identityPath := filepath.Join(cfg.Kernel.ConfigDir, "agent-v2-identity.json")
+	panelPublicKey := strings.TrimSpace(cfg.Control.PanelPublicKey)
+	if initErr == nil && panelPublicKey == "" {
+		panelPublicKey, initErr = platformclient.StoredV2PanelPublicKey(identityPath)
+	}
+	if initErr == nil && panelPublicKey != "" {
+		initErr = client.EnableV2(panelPublicKey, identityPath)
+	}
 	return &Orchestrator{
-		cfg: cfg, version: version, client: platformclient.New(cfg.Control.URL, cfg.Control.Token, cfg.Control.MachineID),
+		cfg: cfg, version: version, client: client, initErr: initErr,
 		nodes: make(map[int]*nodeHandle), statuses: make(map[int]chan<- controlplane.StatusChange),
 		scheduleUpgrade: scheduleAgentUpgrade,
 	}
 }
 
 func (o *Orchestrator) Run(ctx context.Context) error {
+	if o.initErr != nil {
+		return fmt.Errorf("initialize encrypted device platform client: %w", o.initErr)
+	}
 	o.runCtx = ctx
 	handshake, err := o.client.Handshake(ctx)
 	if err != nil {
 		return fmt.Errorf("device platform handshake: %w", err)
+	}
+	if o.client.V2Credentials() == nil && strings.TrimSpace(handshake.Security.PanelPublicKey) != "" {
+		identityPath := filepath.Join(o.cfg.Kernel.ConfigDir, "agent-v2-identity.json")
+		if err := o.client.EnableV2(handshake.Security.PanelPublicKey, identityPath); err != nil {
+			return fmt.Errorf("enable encrypted device platform client: %w", err)
+		}
+		handshake, err = o.client.Handshake(ctx)
+		if err != nil {
+			return fmt.Errorf("device platform V2 handshake: %w", err)
+		}
 	}
 	o.applyIntervals(handshake)
 	if err := o.advanceCursor(handshake.Cursor); err != nil {
@@ -69,6 +94,11 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 			time.Duration(o.cfg.WS.BackoffMax)*time.Second,
 			o.onEvent, o.onStreamStatus,
 		).SetMachineID(o.cfg.Control.MachineID)
+		if credentials := o.client.V2Credentials(); credentials != nil {
+			if err := o.stream.EnableV2(credentials); err != nil {
+				return fmt.Errorf("initialize encrypted device platform stream: %w", err)
+			}
+		}
 		go o.stream.Run(ctx)
 	}
 
@@ -368,7 +398,7 @@ func (o *Orchestrator) sendHeartbeat(ctx context.Context) {
 	metrics := monitor.Collect()
 	response, err := o.client.SendHeartbeat(ctx, platformclient.Heartbeat{
 		Version: o.version, Kernel: o.cfg.Kernel.Type,
-		Capabilities: map[string]any{"machine_mode": true, "dynamic_nodes": true, "protocol_version": platformclient.ProtocolVersion},
+		Capabilities: map[string]any{"machine_mode": true, "dynamic_nodes": true, "protocol_version": o.client.ProtocolVersion()},
 		Metrics: map[string]any{
 			"cpu":  metrics.CPU,
 			"mem":  map[string]uint64{"total": metrics.MemTotal, "used": metrics.MemUsed},

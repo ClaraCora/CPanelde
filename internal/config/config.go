@@ -46,11 +46,12 @@ type Config struct {
 }
 
 type ControlConfig struct {
-	Mode      string `yaml:"mode"`
-	URL       string `yaml:"url"`
-	Token     string `yaml:"token,omitempty"`
-	TokenEnv  string `yaml:"token_env,omitempty"`
-	MachineID string `yaml:"machine_id,omitempty"`
+	Mode           string `yaml:"mode"`
+	URL            string `yaml:"url"`
+	Token          string `yaml:"token,omitempty"`
+	TokenEnv       string `yaml:"token_env,omitempty"`
+	MachineID      string `yaml:"machine_id,omitempty"`
+	PanelPublicKey string `yaml:"panel_public_key,omitempty"`
 }
 
 // MachineConfig identifies this process as a panel-managed machine that
@@ -407,6 +408,10 @@ func (c *Config) applyEnvOverrides() {
 		c.Control.Token = v
 		c.Control.Mode = "device-platform"
 	}
+	if v := envFirst("CORADE_PANEL_PUBLIC_KEY"); v != "" {
+		c.Control.PanelPublicKey = v
+		c.Control.Mode = "device-platform"
+	}
 	if v := envFirst("apiHost", "API_HOST"); v != "" {
 		c.Panel.URL = v
 	}
@@ -485,6 +490,9 @@ func (c *Config) inheritFrom(parent *Config) {
 	}
 	if c.Control.MachineID == "" {
 		c.Control.MachineID = parent.Control.MachineID
+	}
+	if c.Control.PanelPublicKey == "" {
+		c.Control.PanelPublicKey = parent.Control.PanelPublicKey
 	}
 	// Log
 	if c.Log.Level == "" {

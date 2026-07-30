@@ -26,7 +26,10 @@ type Handshake struct {
 		TelemetrySeconds    int `json:"telemetry_seconds"`
 		FallbackPullSeconds int `json:"fallback_pull_seconds"`
 	} `json:"intervals"`
-	Cursor string `json:"cursor"`
+	Cursor   string `json:"cursor"`
+	Security struct {
+		PanelPublicKey string `json:"mbgy"`
+	} `json:"aq,omitempty"`
 }
 
 type Node struct {
