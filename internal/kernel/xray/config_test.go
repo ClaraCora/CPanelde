@@ -489,6 +489,10 @@ func TestBuildConfig_Shadowsocks_MultiUser(t *testing.T) {
 	if len(clients) != 2 {
 		t.Fatalf("expected 2 clients, got %d", len(clients))
 	}
+	wantUserKey, _ := kernel.SS2022UserKey(nc.Cipher, testUsers[0].UUID)
+	if got := clients[0].(map[string]interface{})["password"]; got != wantUserKey {
+		t.Fatalf("client password = %q, want %q", got, wantUserKey)
+	}
 }
 
 func TestBuildConfig_SocksStats(t *testing.T) {

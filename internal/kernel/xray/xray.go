@@ -572,7 +572,11 @@ func toMemoryUser(proto string, nc *model.NodeSpec, u model.UserSpec) (*protocol
 	case "shadowsocks":
 		if strings.HasPrefix(nc.Cipher, "2022-blake3-") {
 			// 2022-blake3 multi-user mode
-			mu.Account = &ss2022.MemoryAccount{Key: u.UUID}
+			userKey, ok := kernel.SS2022UserKey(nc.Cipher, u.UUID)
+			if !ok {
+				return nil, fmt.Errorf("unsupported SS2022 method %q", nc.Cipher)
+			}
+			mu.Account = &ss2022.MemoryAccount{Key: userKey}
 		} else {
 			// Traditional SS — build via getCipher path
 			ct := parseCipherType(nc.Cipher)

@@ -7,11 +7,13 @@ import (
 	"testing"
 
 	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/kernel"
 	"github.com/ClaraCora/CPanelde/internal/model"
 	appstats "github.com/xtls/xray-core/app/stats"
 	xrayCore "github.com/xtls/xray-core/core"
 	featurebandwidth "github.com/xtls/xray-core/features/bandwidth"
 	xraystats "github.com/xtls/xray-core/features/stats"
+	ss2022 "github.com/xtls/xray-core/proxy/shadowsocks_2022"
 	"golang.org/x/time/rate"
 )
 
@@ -159,6 +161,23 @@ func TestXraySetSpeedLimitFuncUsesPatchedCorePath(t *testing.T) {
 	}
 	if mu.Level != 0 {
 		t.Fatalf("MemoryUser.Level = %d, want 0", mu.Level)
+	}
+}
+
+func TestToMemoryUserUsesSS2022UserKey(t *testing.T) {
+	nc := &model.NodeSpec{Protocol: "shadowsocks", Cipher: "2022-blake3-aes-128-gcm"}
+	user := model.UserSpec{ID: 1, UUID: "279d4f89-3a2c-488d-a67c-2d39a72acdde"}
+	mu, err := toMemoryUser("shadowsocks", nc, user)
+	if err != nil {
+		t.Fatalf("toMemoryUser() error = %v", err)
+	}
+	account, ok := mu.Account.(*ss2022.MemoryAccount)
+	if !ok {
+		t.Fatalf("account type = %T, want *shadowsocks_2022.MemoryAccount", mu.Account)
+	}
+	want, _ := kernel.SS2022UserKey(nc.Cipher, user.UUID)
+	if account.Key != want {
+		t.Fatalf("account key = %q, want %q", account.Key, want)
 	}
 }
 

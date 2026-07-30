@@ -1,7 +1,6 @@
 package singbox
 
 import (
-	"encoding/base64"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -675,31 +674,16 @@ func buildMieru(base M, nc *model.NodeSpec, users []model.UserSpec) M {
 	return base
 }
 
-type ss2022Config struct {
-	method string
-	size   int
-}
-
-var ss2022Methods = map[string]ss2022Config{
-	"2022-blake3-aes-128-gcm":       {"2022-blake3-aes-128-gcm", 16},
-	"2022-blake3-aes-256-gcm":       {"2022-blake3-aes-256-gcm", 32},
-	"2022-blake3-chacha20-poly1305": {"2022-blake3-chacha20-poly1305", 32},
-}
-
 func buildShadowsocks(base M, nc *model.NodeSpec, users []model.UserSpec) M {
 	base["type"] = "shadowsocks"
 	base["method"] = nc.Cipher
 
-	ss2022, isSS2022 := ss2022Methods[nc.Cipher]
+	isSS2022 := kernel.IsSS2022Method(nc.Cipher)
 	if isSS2022 {
 		base["password"] = nc.ServerKey
 	}
 
 	userList := make([]M, len(users))
-	var rawBuf []byte
-	if isSS2022 {
-		rawBuf = make([]byte, ss2022.size)
-	}
 
 	for i := range users {
 		u := &users[i]
@@ -709,12 +693,7 @@ func buildShadowsocks(base M, nc *model.NodeSpec, users []model.UserSpec) M {
 		}
 
 		if isSS2022 {
-			// Reuse buffer and clear it to maintain SS2022 key integrity
-			for j := range rawBuf {
-				rawBuf[j] = 0
-			}
-			copy(rawBuf, u.UUID)
-			user["password"] = base64.StdEncoding.EncodeToString(rawBuf)
+			user["password"], _ = kernel.SS2022UserKey(nc.Cipher, u.UUID)
 		}
 		userList[i] = user
 	}

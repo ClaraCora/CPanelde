@@ -58,6 +58,9 @@ func TestBuildInbound_Shadowsocks2022(t *testing.T) {
 	inbound := buildInbound(testNodeSpec(nc), testUsers, kernel.TLSCert{})
 	assertMapValue(t, inbound, "method", "2022-blake3-aes-128-gcm")
 	assertMapValue(t, inbound, "password", "base64serverkey==")
+	users := inbound["users"].([]M)
+	wantUserKey, _ := kernel.SS2022UserKey(nc.Cipher, testUsers[0].UUID)
+	assertMapValue(t, users[0], "password", wantUserKey)
 }
 
 // --- VMess ---

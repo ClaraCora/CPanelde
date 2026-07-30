@@ -305,34 +305,19 @@ func buildTrojan(base M, nc *model.NodeSpec, users []model.UserSpec, tc kernel.T
 	return base
 }
 
-type ss2022Config struct {
-	method string
-	size   int
-}
-
-var ss2022Methods = map[string]ss2022Config{
-	"2022-blake3-aes-128-gcm":       {"2022-blake3-aes-128-gcm", 16},
-	"2022-blake3-aes-256-gcm":       {"2022-blake3-aes-256-gcm", 32},
-	"2022-blake3-chacha20-poly1305": {"2022-blake3-chacha20-poly1305", 32},
-}
-
 func buildShadowsocks(base M, nc *model.NodeSpec, users []model.UserSpec) M {
-	ss2022, isSS2022 := ss2022Methods[nc.Cipher]
+	isSS2022 := kernel.IsSS2022Method(nc.Cipher)
 
 	clients := make([]M, 0, len(users))
 
 	if isSS2022 {
 		// SS2022: server key at top level, per-user key must be Base64 of fixed-length raw bytes.
 		// Only blake3-aes-* supports multi-user in Xray; chacha20 variant is single-user only.
-		rawBuf := make([]byte, ss2022.size)
 		for i := range users {
 			u := &users[i]
-			for j := range rawBuf {
-				rawBuf[j] = 0
-			}
-			copy(rawBuf, u.UUID)
+			userKey, _ := kernel.SS2022UserKey(nc.Cipher, u.UUID)
 			clients = append(clients, M{
-				"password": base64.StdEncoding.EncodeToString(rawBuf),
+				"password": userKey,
 				"email":    userEmail(u.ID),
 			})
 		}
