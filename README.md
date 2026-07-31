@@ -35,7 +35,7 @@ The command generated on a CPanel server page contains the required server ID
 and communication key. It uses this repository's installer directly:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ClaraCora/CPanelde/main/install.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/ClaraCora/CPanelde/main/install.sh | sudo sh -s -- \
   --control-url https://panel.example.com \
   --communication-key YOUR_COMMUNICATION_KEY \
   --machine-id mch_example
@@ -44,12 +44,30 @@ curl -fsSL https://raw.githubusercontent.com/ClaraCora/CPanelde/main/install.sh 
 Upgrade an installed Agent without entering its communication key again:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ClaraCora/CPanelde/main/install.sh | sudo bash -s -- upgrade
+curl -fsSL https://raw.githubusercontent.com/ClaraCora/CPanelde/main/install.sh | sudo sh -s -- upgrade
 ```
 
-The installer supports Linux amd64 and arm64 with systemd. It first downloads a
-checksummed binary from CPanel and falls back to the checksummed `latest` GitHub
-release when the panel artifact is unavailable.
+The installer supports Linux amd64 and arm64 with either systemd or Alpine
+OpenRC. It downloads checksummed Agent and `coradectl` binaries from the
+selected GitHub release. Service startup and failed-upgrade rollback use the
+detected init system automatically.
+
+## Service management
+
+`coradectl` provides the same commands on systemd and OpenRC hosts:
+
+```bash
+coradectl status
+coradectl restart
+coradectl logs
+```
+
+On systemd, logs remain in the journal. On Alpine/OpenRC, Agent output is stored
+in `/var/log/corade/corade.log`; panel-triggered upgrade output is stored in
+`/var/log/corade/upgrade.log`. The OpenRC service is enabled in the `default`
+runlevel and supervised with automatic restart. An upgrade that does not pass
+the service and health checks restores both previous binaries and restarts the
+previous Agent.
 
 ## Device Platform Configuration
 

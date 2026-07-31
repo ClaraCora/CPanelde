@@ -22,7 +22,13 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Validate installer
-        run: bash -n install.sh
+        run: |
+          sh -n install.sh
+          sh -n time-sync-check.sh
+          CGO_ENABLED=0 go build -o /tmp/coradectl ./cmd/xbctl
+          docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh -n /src/install.sh
+          docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh /src/.github/tests/systemd-install-test.sh
+          docker run --rm --privileged -v "$PWD:/src:ro" -v /tmp/coradectl:/usr/local/bin/coradectl:ro alpine:3.22 /bin/sh /src/.github/tests/openrc-install-test.sh
       - run: go test ./...
 
   build:
@@ -54,8 +60,12 @@ jobs:
             -tags "with_quic with_utls with_wireguard with_acme with_clash_api" \
             -ldflags "-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
             -o "dist/corade-linux-${{ matrix.arch }}" ./cmd/corade
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
+            -o "dist/coradectl-linux-${{ matrix.arch }}" ./cmd/xbctl
           cd dist
           sha256sum "corade-linux-${{ matrix.arch }}" > "corade-linux-${{ matrix.arch }}.sha256"
+          sha256sum "coradectl-linux-${{ matrix.arch }}" > "coradectl-linux-${{ matrix.arch }}.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: corade-linux-${{ matrix.arch }}
@@ -86,6 +96,3 @@ jobs:
           else
             gh release create latest dist/* --title "Latest CPanelde Agent build" --prerelease --notes "Automatically built from main at ${GITHUB_SHA}."
           fi
-          for asset in coradectl-linux-amd64 coradectl-linux-arm64; do
-            gh release delete-asset latest "$asset" --yes >/dev/null 2>&1 || true
-          done

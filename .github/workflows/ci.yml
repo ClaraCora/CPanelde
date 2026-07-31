@@ -26,6 +26,16 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Validate POSIX and Alpine installer syntax
+        run: |
+          sh -n install.sh
+          sh -n time-sync-check.sh
+          CGO_ENABLED=0 go build -o /tmp/coradectl ./cmd/xbctl
+          docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh -n /src/install.sh
+          docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh -n /src/time-sync-check.sh
+          docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh /src/.github/tests/systemd-install-test.sh
+          docker run --rm --privileged -v "$PWD:/src:ro" -v /tmp/coradectl:/usr/local/bin/coradectl:ro alpine:3.22 /bin/sh /src/.github/tests/openrc-install-test.sh
+
   build:
     name: Build
     runs-on: ubuntu-latest

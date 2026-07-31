@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,8 +28,13 @@ const (
 	defaultCredentialsPath = "/etc/corade/credentials.env"
 	defaultBinaryPath      = "/usr/local/bin/corade"
 	defaultCLIPath         = "/usr/local/bin/coradectl"
-	serviceName            = "corade.service"
-	serviceFilePath        = "/etc/systemd/system/corade.service"
+	serviceName            = "corade"
+	systemdServiceName     = "corade.service"
+	systemdServiceFilePath = "/etc/systemd/system/corade.service"
+	openRCServiceFilePath  = "/etc/init.d/corade"
+	openRCLogDir           = "/var/log/corade"
+	openRCLogPath          = "/var/log/corade/corade.log"
+	agentEnvironmentPath   = "/etc/corade/agent.env"
 	defaultInstallRoot     = "/etc/corade"
 	downloadBase           = "https://github.com/ClaraCora/CPanelde/releases"
 )
@@ -163,7 +169,7 @@ func run(args []string) error {
 	case "service":
 		return runService(args[1:])
 	case "logs", "log":
-		return runService([]string{"logs"})
+		return runService(append([]string{"logs"}, args[1:]...))
 	case "health":
 		return runHealth()
 	case "bind":
@@ -236,7 +242,7 @@ func runStatus() error {
 	fmt.Printf("  version:  %s\n", ver)
 
 	// Service status
-	svc := systemctlState()
+	svc := managedServiceState()
 	fmt.Printf("  service:  %s\n", svc)
 
 	// Health
@@ -297,14 +303,11 @@ func runService(args []string) error {
 	rest := args[1:]
 	switch sub {
 	case "status":
-		return runCommand("sudo", append([]string{"systemctl", "status", serviceName, "--no-pager"}, rest...)...)
+		return runManagedServiceAction("status", rest...)
 	case "start", "stop", "restart", "enable", "disable":
-		return runCommand("sudo", append([]string{"systemctl", sub, serviceName}, rest...)...)
+		return runManagedServiceAction(sub, rest...)
 	case "logs":
-		if len(rest) == 0 {
-			rest = []string{"-f"}
-		}
-		return runCommand("sudo", append([]string{"journalctl", "-u", serviceName}, rest...)...)
+		return runManagedServiceLogs(rest)
 	default:
 		return fmt.Errorf("unknown service command: %s", sub)
 	}
@@ -374,7 +377,7 @@ func runBindAdd(mode string, args []string) error {
 	}
 	// Restart service to pick up new config
 	fmt.Println("Restarting service...")
-	if err := runCommand("systemctl", "restart", serviceName); err != nil {
+	if err := runManagedServiceAction("restart"); err != nil {
 		return fmt.Errorf("service restart failed: %w", err)
 	}
 	fmt.Println("Binding added successfully")
@@ -406,16 +409,18 @@ func runUpgrade(args []string) error {
 	newBinary := filepath.Join(binaryDir, ".corade.new")
 	newCLI := filepath.Join(cliDir, ".coradectl.new")
 
-	binaryURL := resolveDownloadURL(fmt.Sprintf("corade-linux-%s", arch), version)
-	cliURL := resolveDownloadURL(fmt.Sprintf("coradectl-linux-%s", arch), version)
+	binaryArtifact := fmt.Sprintf("corade-linux-%s", arch)
+	cliArtifact := fmt.Sprintf("coradectl-linux-%s", arch)
+	binaryURL := resolveDownloadURL(binaryArtifact, version)
+	cliURL := resolveDownloadURL(cliArtifact, version)
 
 	fmt.Printf("Downloading %s...\n", binaryURL)
-	if err := downloadFile(binaryURL, newBinary); err != nil {
+	if err := downloadVerifiedArtifact(binaryArtifact, version, newBinary); err != nil {
 		return fmt.Errorf("download binary: %w", err)
 	}
 
 	fmt.Printf("Downloading %s...\n", cliURL)
-	if err := downloadFile(cliURL, newCLI); err != nil {
+	if err := downloadVerifiedArtifact(cliArtifact, version, newCLI); err != nil {
 		os.Remove(newBinary)
 		return fmt.Errorf("download coradectl: %w", err)
 	}
@@ -468,8 +473,12 @@ func runUpgrade(args []string) error {
 
 	// Restart service
 	fmt.Println("Restarting service...")
-	runCommand("systemctl", "daemon-reload")
-	if err := runCommand("systemctl", "restart", serviceName); err != nil {
+	runManagedServiceAction("reload-manager")
+	restartErr := runManagedServiceAction("restart")
+	if restartErr == nil {
+		restartErr = waitForManagedServiceHealthy(30 * time.Second)
+	}
+	if restartErr != nil {
 		fmt.Println("Restart failed, rolling back...")
 		rollbackOK := true
 		if fileExists(backupBinary) {
@@ -484,12 +493,15 @@ func runUpgrade(args []string) error {
 				rollbackOK = false
 			}
 		}
-		runCommand("systemctl", "daemon-reload")
-		if e := runCommand("systemctl", "restart", serviceName); e != nil {
+		runManagedServiceAction("reload-manager")
+		if e := runManagedServiceAction("restart"); e != nil {
 			return fmt.Errorf("upgrade and rollback restart both failed: %w", e)
 		}
+		if e := waitForManagedServiceHealthy(30 * time.Second); e != nil {
+			return fmt.Errorf("upgrade failed and the restored Agent is unhealthy: %w", e)
+		}
 		if rollbackOK {
-			return errors.New("upgrade failed: service restart failed, rolled back successfully")
+			return fmt.Errorf("upgrade failed: %v; rolled back successfully", restartErr)
 		}
 		return errors.New("upgrade failed: partial rollback, check binary state manually")
 	}
@@ -540,18 +552,20 @@ func runUninstall(args []string) error {
 
 	var warnings []string
 
-	// Stop and disable service
-	if fileExists(serviceFilePath) {
-		if err := runCommand("systemctl", "stop", serviceName); err != nil {
+	// Stop and disable the active service manager, then remove stale definitions.
+	if fileExists(systemdServiceFilePath) || fileExists(openRCServiceFilePath) {
+		if err := runManagedServiceAction("stop"); err != nil {
 			warnings = append(warnings, fmt.Sprintf("stop service: %v", err))
 		}
-		if err := runCommand("systemctl", "disable", serviceName); err != nil {
+		if err := runManagedServiceAction("disable"); err != nil {
 			warnings = append(warnings, fmt.Sprintf("disable service: %v", err))
 		}
-		if err := os.Remove(serviceFilePath); err != nil {
-			warnings = append(warnings, fmt.Sprintf("remove service file: %v", err))
+		for _, path := range []string{systemdServiceFilePath, openRCServiceFilePath} {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				warnings = append(warnings, fmt.Sprintf("remove service file %s: %v", path, err))
+			}
 		}
-		runCommand("systemctl", "daemon-reload")
+		runManagedServiceAction("reload-manager")
 	}
 
 	// Remove binaries
@@ -616,6 +630,51 @@ func downloadFile(url, dest string) error {
 	defer f.Close()
 	_, err = io.Copy(f, resp.Body)
 	return err
+}
+
+func downloadVerifiedArtifact(artifact, version, destination string) error {
+	artifactURL := resolveDownloadURL(artifact, version)
+	if err := downloadFile(artifactURL, destination); err != nil {
+		return err
+	}
+	checksumPath := destination + ".sha256"
+	defer os.Remove(checksumPath)
+	if err := downloadFile(resolveDownloadURL(artifact+".sha256", version), checksumPath); err != nil {
+		os.Remove(destination)
+		return fmt.Errorf("download checksum: %w", err)
+	}
+	checksumData, err := os.ReadFile(checksumPath)
+	if err != nil {
+		os.Remove(destination)
+		return err
+	}
+	fields := strings.Fields(string(checksumData))
+	if len(fields) == 0 || len(fields[0]) != sha256.Size*2 {
+		os.Remove(destination)
+		return errors.New("invalid SHA-256 checksum file")
+	}
+	file, err := os.Open(destination)
+	if err != nil {
+		os.Remove(destination)
+		return err
+	}
+	hash := sha256.New()
+	_, copyErr := io.Copy(hash, file)
+	closeErr := file.Close()
+	if copyErr != nil {
+		os.Remove(destination)
+		return copyErr
+	}
+	if closeErr != nil {
+		os.Remove(destination)
+		return closeErr
+	}
+	actual := fmt.Sprintf("%x", hash.Sum(nil))
+	if !strings.EqualFold(actual, fields[0]) {
+		os.Remove(destination)
+		return fmt.Errorf("SHA-256 mismatch for %s", artifact)
+	}
+	return nil
 }
 
 func cleanupFiles(a, b string, err error) error {
@@ -782,7 +841,7 @@ func removeBinding(panelURL string, nodeID int, machineID int, instanceID string
 		if err := writeInstallMeta(defaultMetaPath, root); err != nil {
 			return err
 		}
-		runCommand("systemctl", "stop", serviceName)
+		runManagedServiceAction("stop")
 		fmt.Printf("removed %d binding(s)\n", len(removed))
 		fmt.Println("All bindings removed. Service stopped.")
 		fmt.Println("Use 'coradectl bind add-node/add-machine' to add a new binding, or 'coradectl uninstall' to fully uninstall.")
@@ -800,7 +859,7 @@ func removeBinding(panelURL string, nodeID int, machineID int, instanceID string
 	if err := writeInstallMeta(defaultMetaPath, root); err != nil {
 		return err
 	}
-	if err := runCommand("systemctl", "restart", serviceName); err != nil {
+	if err := runManagedServiceAction("restart"); err != nil {
 		return err
 	}
 	fmt.Printf("removed %d binding(s)\n", len(removed))
@@ -1004,7 +1063,7 @@ func collectRowsFromMeta() ([]instanceRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	serviceStatus := systemctlState()
+	serviceStatus := managedServiceState()
 	healthStatus := healthStatus()
 	rows := make([]instanceRow, 0, len(meta.Instances))
 	for _, inst := range meta.Instances {
@@ -1030,7 +1089,7 @@ func collectRowsFromConfig() ([]instanceRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	serviceStatus := systemctlState()
+	serviceStatus := managedServiceState()
 	healthStatus := healthStatus()
 	rows := make([]instanceRow, 0, len(instances))
 	for _, inst := range instances {
@@ -1066,19 +1125,6 @@ func printRows(rows []instanceRow, output string) error {
 	tw.Flush()
 	_, err := fmt.Print(buf.String())
 	return err
-}
-
-func systemctlState() string {
-	cmd := exec.Command("systemctl", "is-active", serviceName)
-	out, err := cmd.CombinedOutput()
-	state := strings.TrimSpace(string(out))
-	if state != "" {
-		return state
-	}
-	if err != nil {
-		return "unknown"
-	}
-	return state
 }
 
 func healthStatus() string {
@@ -1155,27 +1201,7 @@ func latestInstanceID(instances []*config.Config) string {
 }
 
 func regenerateServiceFile() error {
-	unit := fmt.Sprintf(`[Unit]
-Description=Corade Node Backend
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=%s
-EnvironmentFile=-%s
-ExecStart=%s -c %s
-Restart=always
-RestartSec=5
-LimitNOFILE=1048576
-NoNewPrivileges=true
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-`, defaultInstallRoot, defaultCredentialsPath, defaultBinaryPath, defaultConfigPath)
-	return os.WriteFile(serviceFilePath, []byte(unit), 0o644)
+	return writeManagedServiceFile()
 }
 
 func machineIDPtr(cfg *config.Config) *int {

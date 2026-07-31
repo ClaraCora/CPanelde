@@ -1,25 +1,14 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-log() {
-  printf '[%s] %s\n' "$1" "$2"
-}
-
-info() {
-  log INFO "$1"
-}
-
-warn() {
-  log WARN "$1"
-}
-
-error() {
-  log ERROR "$1" >&2
-}
+log() { printf '[%s] %s\n' "$1" "$2"; }
+info() { log INFO "$1"; }
+warn() { log WARN "$1"; }
+error() { log ERROR "$1" >&2; }
 
 require_root() {
-  if [ "${EUID:-$(id -u)}" -ne 0 ]; then
-    error "请使用 root 运行此脚本"
+  if [ "$(id -u)" -ne 0 ]; then
+    error "Run this script as root"
     exit 1
   fi
 }
@@ -38,109 +27,107 @@ detect_pkg_manager() {
   fi
 }
 
-install_chrony() {
-  local pm
-  pm="$(detect_pkg_manager)"
+detect_init_system() {
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    echo systemd
+  elif command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; then
+    echo openrc
+  else
+    echo unknown
+  fi
+}
 
-  case "$pm" in
+install_chrony() {
+  case "$(detect_pkg_manager)" in
     apt)
-      info "使用 apt 安装 chrony"
+      info "Installing chrony with apt"
       apt-get update
       DEBIAN_FRONTEND=noninteractive apt-get install -y chrony
       ;;
     dnf)
-      info "使用 dnf 安装 chrony"
+      info "Installing chrony with dnf"
       dnf install -y chrony
       ;;
     yum)
-      info "使用 yum 安装 chrony"
+      info "Installing chrony with yum"
       yum install -y chrony
       ;;
     apk)
-      info "使用 apk 安装 chrony"
+      info "Installing chrony with apk"
       apk add --no-cache chrony
       ;;
     *)
-      error "未识别的包管理器，无法自动安装 chrony"
+      error "No supported package manager was found"
       exit 1
       ;;
   esac
 }
 
-service_exists() {
-  local name="$1"
-  systemctl list-unit-files "$name" 2>/dev/null | grep -q "^${name}"
-}
-
 enable_chrony_service() {
-  if service_exists chrony.service; then
-    info "启用并启动 chrony.service"
-    systemctl enable --now chrony.service
-    return
-  fi
-
-  if service_exists chronyd.service; then
-    warn "检测到 chronyd.service 是别名，改为启用并启动 chrony.service"
-    systemctl enable --now chrony.service
-    return
-  fi
-
-  error "已安装 chrony，但未找到 [chrony.service](time-sync-check.sh:1) 或可用的 [chronyd.service](time-sync-check.sh:1)"
-  exit 1
+  init_system=$(detect_init_system)
+  case "$init_system" in
+    systemd)
+      if systemctl list-unit-files chrony.service 2>/dev/null | grep -q '^chrony.service'; then
+        systemctl enable --now chrony.service
+      elif systemctl list-unit-files chronyd.service 2>/dev/null | grep -q '^chronyd.service'; then
+        systemctl enable --now chronyd.service
+      else
+        error "chrony is installed but no systemd service was found"
+        exit 1
+      fi
+      ;;
+    openrc)
+      if [ -x /etc/init.d/chronyd ]; then
+        chrony_service=chronyd
+      elif [ -x /etc/init.d/chrony ]; then
+        chrony_service=chrony
+      else
+        error "chrony is installed but no OpenRC service was found"
+        exit 1
+      fi
+      rc-update add "$chrony_service" default >/dev/null
+      rc-service "$chrony_service" start
+      ;;
+    *)
+      error "No supported service manager was found"
+      exit 1
+      ;;
+  esac
 }
 
 ensure_chrony() {
   if command -v chronyc >/dev/null 2>&1; then
-    info "检测到 chrony 已安装"
+    info "chrony is already installed"
   else
-    warn "未检测到 chrony，开始安装"
+    warn "chrony is not installed"
     install_chrony
   fi
-
   enable_chrony_service
 }
 
 force_sync() {
-  if command -v chronyc >/dev/null 2>&1; then
-    info "执行 chrony 立即校时"
-    chronyc makestep || warn "chronyc makestep 执行失败，请稍后手动重试"
-  fi
+  info "Requesting an immediate clock step"
+  chronyc makestep || warn "chronyc makestep failed; retry after the daemon has synchronized"
 }
 
 show_status() {
-  echo
-  info "当前 timedatectl 状态"
   if command -v timedatectl >/dev/null 2>&1; then
     timedatectl status || true
-  else
-    warn "系统未提供 timedatectl"
   fi
-
-  echo
-  info "当前 chrony tracking 状态"
   if command -v chronyc >/dev/null 2>&1; then
     chronyc tracking || true
-    echo
-    info "当前 chrony sources 状态"
     chronyc sources -v || true
-  else
-    warn "系统未提供 chronyc"
   fi
 }
 
 main() {
   require_root
-  info "开始检查服务器时间同步状态"
+  info "Checking server time synchronization"
   show_status
-  echo
   ensure_chrony
   force_sync
   sleep 2
-  echo
-  info "校时完成，重新输出状态"
   show_status
-  echo
-  info "如果 [System clock synchronized](time-sync-check.sh:1) 仍短暂显示 no，但 [chronyc tracking](time-sync-check.sh:1) 中偏移接近 0，通常说明系统已经基本同步"
 }
 
 main "$@"
