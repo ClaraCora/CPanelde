@@ -314,14 +314,20 @@ func (m *Manager) startFile() error {
 // ─── Mode: self ────────────────────────────────────────────────────────────
 
 func (m *Manager) startSelfSigned() error {
-	// Reuse persisted self-signed cert if available and valid.
-	if m.loadPersistedPEM() {
-		return nil
-	}
-
 	domain := m.cfg.Domain
 	if domain == "" {
 		domain = "localhost"
+	}
+	// Reuse persisted material only when it still covers the configured name.
+	// Changing the panel's random SNI must also regenerate the self-signed SAN.
+	if m.loadPersistedPEM() {
+		block, _ := pem.Decode(m.TLSCert().CertPEM)
+		if block != nil {
+			certificate, err := x509.ParseCertificate(block.Bytes)
+			if err == nil && certificate.VerifyHostname(domain) == nil && time.Now().Before(certificate.NotAfter) {
+				return nil
+			}
+		}
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
