@@ -85,8 +85,12 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
 
 	var useremail string
 	var userlevel uint32
+	// Inbound traffic counters wrap the authenticated transport connection.
+	// Read its identity from the underlying connection, but keep conn for I/O
+	// so system inbound traffic continues to be counted.
+	iConn := stat.TryUnwrapStatsConn(conn)
 	type User interface{ User() *protocol.MemoryUser }
-	if v, ok := conn.(User); ok {
+	if v, ok := iConn.(User); ok {
 		inbound.User = v.User()
 		if inbound.User != nil {
 			useremail = inbound.User.Email
@@ -94,7 +98,6 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
 		}
 	}
 
-	iConn := stat.TryUnwrapStatsConn(conn)
 	if _, ok := iConn.(*hysteria.InterUdpConn); ok {
 		r := io.Reader(conn)
 		b := make([]byte, MaxUDPSize)
