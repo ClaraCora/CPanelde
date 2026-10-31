@@ -7,14 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/ClaraCora/CPanelde/internal/agentv2"
+	"github.com/ClaraCora/CPanelde/internal/controlsecurity"
 )
 
 type v2IdentityFile struct {
@@ -36,15 +35,13 @@ type V2Credentials struct {
 	identityPublic  ed25519.PublicKey
 	identityPrivate ed25519.PrivateKey
 	enrolled        bool
+	onEnrolled      func() error
 }
 
 func loadV2Credentials(machineID, enrollmentKey, panelPublicKey, identityPath string) (*V2Credentials, error) {
 	machineID = strings.TrimSpace(machineID)
 	if machineID == "" {
 		return nil, errors.New("V2 machine ID is required")
-	}
-	if len(enrollmentKey) < 32 {
-		return nil, errors.New("V2 enrollment key must contain at least 32 bytes")
 	}
 	panelIdentity, err := agentv2.ParsePublicKey(strings.TrimSpace(panelPublicKey))
 	if err != nil {
@@ -62,6 +59,12 @@ func loadV2Credentials(machineID, enrollmentKey, panelPublicKey, identityPath st
 	if err := credentials.loadOrCreateIdentity(); err != nil {
 		return nil, err
 	}
+	if !credentials.enrolled && len(enrollmentKey) < 32 {
+		return nil, errors.New("V2 enrollment key must contain at least 32 bytes for a new identity")
+	}
+	// Keep an explicitly supplied replacement credential until the first signed
+	// connection succeeds: an administrator may have reset this machine's
+	// registration while its local private identity is still present.
 	return credentials, nil
 }
 
@@ -115,14 +118,20 @@ func (c *V2Credentials) handshakeIdentity() (ed25519.PublicKey, ed25519.PrivateK
 
 func (c *V2Credentials) markEnrolled() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.enrolled {
-		return nil
+	if !c.enrolled {
+		c.enrolled = true
+		if err := c.writeIdentityLocked(); err != nil {
+			c.enrolled = false
+			c.mu.Unlock()
+			return err
+		}
 	}
-	c.enrolled = true
-	if err := c.writeIdentityLocked(); err != nil {
-		c.enrolled = false
-		return err
+	clear(c.enrollmentKey)
+	c.enrollmentKey = nil
+	cleanup := c.onEnrolled
+	c.mu.Unlock()
+	if cleanup != nil {
+		return cleanup()
 	}
 	return nil
 }
@@ -202,28 +211,9 @@ func replaceFile(source, target string) error {
 }
 
 func validateV2Endpoint(rawURL string, websocket bool) error {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || parsed.Hostname() == "" {
-		return errors.New("V2 endpoint URL is invalid")
-	}
-	secureScheme, localScheme := "https", "http"
-	if websocket {
-		secureScheme, localScheme = "wss", "ws"
-	}
-	if strings.EqualFold(parsed.Scheme, secureScheme) {
-		return nil
-	}
-	if !strings.EqualFold(parsed.Scheme, localScheme) || !isLoopbackHost(parsed.Hostname()) {
-		return fmt.Errorf("V2 endpoint must use %s outside a loopback address", secureScheme)
-	}
-	return nil
+	return controlsecurity.ValidateEndpoint(rawURL, websocket)
 }
 
 func ValidateControlEndpoint(rawURL string) error {
 	return validateV2Endpoint(rawURL, false)
-}
-
-func isLoopbackHost(host string) bool {
-	ip := net.ParseIP(strings.TrimSpace(host))
-	return ip != nil && ip.IsLoopback()
 }

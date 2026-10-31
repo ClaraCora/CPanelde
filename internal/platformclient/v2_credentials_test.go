@@ -29,6 +29,12 @@ func TestV2IdentityPersistsAcrossRestarts(t *testing.T) {
 	if err := first.markEnrolled(); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, key, _ := first.handshakeIdentity(); len(key) != 0 {
+		t.Fatal("enrollment secret retained after success")
+	}
+	if _, err := loadV2Credentials("mch_test", "", panelKey, path); err != nil {
+		t.Fatalf("enrolled identity requires bootstrap secret after restart: %v", err)
+	}
 	second, err := loadV2Credentials("mch_test", enrollmentKey, panelKey, path)
 	if err != nil {
 		t.Fatal(err)

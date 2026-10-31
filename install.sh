@@ -24,6 +24,7 @@ BINARY_SOURCE=""
 VERSION="latest"
 INIT_SYSTEM=""
 CLI_REPLACED=0
+RELEASE_PUBLIC_KEY_FILE=""
 
 usage() {
   cat <<'HELP'
@@ -35,7 +36,7 @@ Usage:
 
 Required for install:
   --control-url URL            CPanel public URL
-  --communication-key KEY     Shared Agent communication key
+  --communication-key KEY     One-use machine enrollment credential (expires after 30 minutes)
   --machine-id ID             CPanel server ID
   --panel-public-key KEY      Pinned CPanel Ed25519 public key
 
@@ -77,6 +78,7 @@ done
 [ "$(id -u)" -eq 0 ] || fail "run this installer as root"
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required"
+command -v openssl >/dev/null 2>&1 || fail "OpenSSL 3 with Ed25519 support is required"
 
 detect_init_system() {
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
@@ -157,21 +159,69 @@ PREVIOUS_CLI="${TMP_DIR}/coradectl.previous"
 AGENT_ARTIFACT="corade-linux-${ARCH}"
 CLI_ARTIFACT="coradectl-linux-${ARCH}"
 
+ensure_release_public_key() {
+  RELEASE_PUBLIC_KEY_FILE="${TMP_DIR}/release-public-key.pem"
+  cat >"$RELEASE_PUBLIC_KEY_FILE" <<'CORADE_RELEASE_PUBLIC_KEY'
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAfdTCCGP0bVOLETELjtMHSKW6o7KLwO2A1tzt9xvW2GE=
+-----END PUBLIC KEY-----
+CORADE_RELEASE_PUBLIC_KEY
+}
+
+download_release_file() {
+  curl --proto '=https' --proto-redir '=https' --fail --location --silent --show-error --connect-timeout 10 --max-time 120 --max-filesize "${3:-536870912}" --retry 2 "$1" -o "$2"
+}
+
 verify_download() {
   artifact="$1"
-  # BusyBox (Alpine) and GNU coreutils both support -c, not --check/--status.
+  # Select exactly one signed digest; never feed remote filenames to sha256sum.
+  awk -v name="$artifact" '
+    NF == 2 && $2 == name { if (length($1) != 64 || $1 !~ /^[[:xdigit:]]+$/) exit 1; print $1 "  " name; count++ }
+    END { if (count != 1) exit 1 }
+  ' "${TMP_DIR}/release-manifest.sha256" >"${TMP_DIR}/${artifact}.sha256" || return 1
   (cd "$TMP_DIR" && sha256sum -c "${artifact}.sha256" >/dev/null)
+}
+
+load_signed_manifest() {
+  manifest_url="$1"
+  version_file="$2"
+  requested_version="$3"
+  MANIFEST_BASE_URL=""
+  ensure_release_public_key || return 1
+  download_release_file "${manifest_url}/release-manifest.sha256" "${TMP_DIR}/release-manifest.sha256" 65536 || return 1
+  download_release_file "${manifest_url}/release-manifest.sha256.sig" "${TMP_DIR}/release-manifest.sha256.sig" 64 || return 1
+  [ "$(wc -c <"${TMP_DIR}/release-manifest.sha256")" -le 65536 ] || return 1
+  [ "$(wc -c <"${TMP_DIR}/release-manifest.sha256.sig")" -eq 64 ] || return 1
+  openssl pkeyutl -verify -pubin -inkey "$RELEASE_PUBLIC_KEY_FILE" -rawin \
+    -in "${TMP_DIR}/release-manifest.sha256" -sigfile "${TMP_DIR}/release-manifest.sha256.sig" >/dev/null 2>&1 || return 1
+  awk '
+    NF != 2 || length($1) != 64 || $1 !~ /^[[:xdigit:]]+$/ || length($2) > 128 || $2 !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/ { exit 1 }
+    seen[$2]++ { exit 1 }
+    END { if (NR == 0) exit 1 }
+  ' "${TMP_DIR}/release-manifest.sha256" || return 1
+  download_release_file "${manifest_url}/${version_file}" "${TMP_DIR}/${version_file}" 256 || return 1
+  verify_download "$version_file" || return 1
+  signed_version=$(tr -d '\r\n' <"${TMP_DIR}/${version_file}")
+  printf '%s' "$signed_version" | grep -Eq '^(v[0-9]+\.[0-9]+\.[0-9]+|main)(\+[A-Za-z0-9._-]+)?$' || return 1
+  requested_version=${requested_version#corade-}
+  requested_version=${requested_version#cpanel-}
+  if [ "$requested_version" != latest ] && [ -n "$requested_version" ]; then
+    case "$requested_version" in
+      *+*) [ "$signed_version" = "$requested_version" ] || return 1 ;;
+      *) [ "${signed_version%%+*}" = "$requested_version" ] || return 1 ;;
+    esac
+  fi
+  MANIFEST_BASE_URL="$manifest_url"
 }
 
 try_download() {
   artifact="$1"
-  destination="$2"
+  download_destination="$2"
   base_url="$3"
   rm -f "${TMP_DIR}/${artifact}" "${TMP_DIR}/${artifact}.sha256"
-  curl --fail --location --silent --show-error --retry 3 "${base_url}/${artifact}" -o "${TMP_DIR}/${artifact}" || return 1
-  curl --fail --location --silent --show-error --retry 3 "${base_url}/${artifact}.sha256" -o "${TMP_DIR}/${artifact}.sha256" || return 1
+  download_release_file "${base_url}/${artifact}" "${TMP_DIR}/${artifact}" || return 1
   verify_download "$artifact" || return 1
-  mv "${TMP_DIR}/${artifact}" "$destination"
+  mv "${TMP_DIR}/${artifact}" "$download_destination"
 }
 
 stage_artifacts() {
@@ -189,6 +239,7 @@ stage_artifacts() {
     esac
     base_url="https://github.com/${REPOSITORY}/releases/download/${release_tag}"
     log "downloading ${REPOSITORY} release ${VERSION}"
+    load_signed_manifest "$base_url" agent-version.txt "$VERSION" || fail "release signature or requested version verification failed"
     try_download "$AGENT_ARTIFACT" "$STAGED_BINARY" "$base_url" || fail "could not download a verified Agent binary"
     try_download "$CLI_ARTIFACT" "$STAGED_CLI" "$base_url" || fail "could not download a verified coradectl binary"
   fi
@@ -292,6 +343,7 @@ fi
 case "$CONTROL_URL" in http://*|https://*) ;; *) fail "control URL must start with http:// or https://" ;; esac
 case "$CONTROL_URL" in *[[:space:]\"\\]*) fail "control URL contains unsupported characters" ;; esac
 case "$MACHINE_ID" in *[!A-Za-z0-9_-]*|'') fail "machine ID contains unsupported characters" ;; esac
+[ -n "$PANEL_PUBLIC_KEY" ] || fail "--panel-public-key is required for secure enrollment"
 if [ -n "$PANEL_PUBLIC_KEY" ]; then
   [ "${#PANEL_PUBLIC_KEY}" -eq 43 ] || fail "panel public key is invalid"
   case "$PANEL_PUBLIC_KEY" in *[!A-Za-z0-9_-]*) fail "panel public key is invalid" ;; esac

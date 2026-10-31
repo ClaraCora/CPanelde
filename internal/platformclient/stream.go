@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ClaraCora/CPanelde/internal/agentv2"
+	"github.com/ClaraCora/CPanelde/internal/controlsecurity"
 	"github.com/ClaraCora/CPanelde/internal/nlog"
 	"github.com/gorilla/websocket"
 )
@@ -84,7 +85,11 @@ func (s *Stream) Run(ctx context.Context) {
 	}
 }
 
-func (s *Stream) runOnce(ctx context.Context) (time.Time, error) {
+func (s *Stream) runOnce(ctx context.Context) (connectedAt time.Time, resultErr error) {
+	defer func() { resultErr = controlsecurity.RedactError(resultErr, s.token) }()
+	if err := controlsecurity.ValidateEndpoint(s.url, true); err != nil {
+		return time.Time{}, err
+	}
 	if s.v2 != nil {
 		return s.runOnceV2(ctx)
 	}
@@ -99,7 +104,7 @@ func (s *Stream) runOnce(ctx context.Context) (time.Time, error) {
 		s.setConnected(false)
 		return time.Time{}, err
 	}
-	connectedAt := time.Now()
+	connectedAt = time.Now()
 	s.setConnected(true)
 	conn.SetReadLimit(2 << 20)
 	done := make(chan struct{})

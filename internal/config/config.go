@@ -13,13 +13,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ClaraCora/CPanelde/internal/controlsecurity"
 	"github.com/ClaraCora/CPanelde/internal/nlog"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	InstanceID string        `yaml:"-"`
+	sourcePath string
+	InstanceID string        `yaml:"id,omitempty"`
 	Control    ControlConfig `yaml:"control"`
 	Panel      PanelConfig   `yaml:"panel"`
 	Node       NodeConfig    `yaml:"node"`
@@ -231,6 +233,12 @@ func LoadRoot(path string) (*RootConfig, error) {
 	// config_dir is not explicitly set. This makes non-root / dev deployments
 	// work without any extra configuration.
 	baseDir := configBaseDir(path)
+	if err == nil {
+		rc.Config.sourcePath = path
+		for i := range rc.Instances {
+			rc.Instances[i].sourcePath = path
+		}
+	}
 
 	rc.applyEnvOverrides()
 	rc.resolveEnvRefs()
@@ -339,11 +347,13 @@ func (rc *RootConfig) validateRoot() error {
 
 func (rc *RootConfig) NormalizeInstances() ([]*Config, error) {
 	if len(rc.Instances) == 0 {
-		id, err := rc.Config.AutoInstanceID()
-		if err != nil {
-			return nil, err
+		if rc.Config.InstanceID == "" {
+			id, err := rc.Config.AutoInstanceID()
+			if err != nil {
+				return nil, err
+			}
+			rc.Config.InstanceID = id
 		}
-		rc.Config.InstanceID = id
 		return []*Config{&rc.Config}, nil
 	}
 	out := make([]*Config, 0, len(rc.Instances))
@@ -377,6 +387,9 @@ func Load(path string) (*Config, error) {
 	}
 
 	baseDir := configBaseDir(path)
+	if err == nil {
+		cfg.sourcePath = path
+	}
 
 	cfg.applyEnvOverrides()
 	cfg.resolveEnvRefs()
@@ -698,6 +711,9 @@ func normalizeBaseURL(raw string) (string, string, error) {
 	if raw == "standalone" {
 		return raw, raw, nil
 	}
+	if err := controlsecurity.ValidateEndpoint(raw, false); err != nil {
+		return "", "", err
+	}
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return "", "", fmt.Errorf("invalid panel.url %q: %w", raw, err)
@@ -743,6 +759,15 @@ func normalizeBaseURL(raw string) (string, string, error) {
 }
 
 func (c *Config) validate() error {
+	if !c.IsStandalone() {
+		endpoint := c.Panel.URL
+		if c.IsDevicePlatform() {
+			endpoint = c.Control.URL
+		}
+		if err := controlsecurity.ValidateEndpoint(endpoint, false); err != nil {
+			return err
+		}
+	}
 	mode := strings.ToLower(strings.TrimSpace(c.Control.Mode))
 	if mode != "" && mode != "device-platform" {
 		return fmt.Errorf("control.mode must be 'device-platform', got %q", c.Control.Mode)
@@ -759,7 +784,7 @@ func (c *Config) validate() error {
 		if strings.TrimSpace(c.Control.URL) == "" {
 			return fmt.Errorf("control.url is required")
 		}
-		if strings.TrimSpace(c.Control.Token) == "" {
+		if strings.TrimSpace(c.Control.Token) == "" && strings.TrimSpace(c.Control.PanelPublicKey) == "" {
 			return fmt.Errorf("control.token or control.token_env is required")
 		}
 		if strings.TrimSpace(c.Control.MachineID) == "" {

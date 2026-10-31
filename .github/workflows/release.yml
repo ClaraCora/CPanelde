@@ -13,11 +13,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  security:
+    uses: ./.github/workflows/security.yml
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -26,7 +28,7 @@ jobs:
           sh -n install.sh
           sh -n time-sync-check.sh
           sh .github/tests/installer-checksum-test.sh install.sh
-          docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh -c 'apk add --no-cache curl >/dev/null && sh /src/.github/tests/installer-checksum-test.sh /src/install.sh'
+          docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh -c 'apk add --no-cache curl openssl >/dev/null && sh /src/.github/tests/installer-checksum-test.sh /src/install.sh'
           CGO_ENABLED=0 go build -o /tmp/coradectl ./cmd/xbctl
           docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh -n /src/install.sh
           docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh /src/.github/tests/systemd-install-test.sh
@@ -36,11 +38,11 @@ jobs:
   publish:
     name: Build and publish to CPP
     if: github.ref == 'refs/heads/main'
-    needs: test
+    needs: [test, security]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -64,10 +66,10 @@ jobs:
           for arch in amd64 arm64; do
             GOARCH="$arch" go build -trimpath \
               -tags "with_quic with_utls with_wireguard with_acme with_clash_api" \
-              -ldflags "-s -w -X main.version=$VERSION -X main.buildTime=$BUILD_TIME" \
+              -ldflags "-X main.version=$VERSION -X main.buildTime=$BUILD_TIME" \
               -o "dist/corade-linux-$arch" ./cmd/corade
             GOARCH="$arch" go build -trimpath \
-              -ldflags "-s -w -X main.version=$VERSION -X main.buildTime=$BUILD_TIME" \
+              -ldflags "-X main.version=$VERSION -X main.buildTime=$BUILD_TIME" \
               -o "dist/coradectl-linux-$arch" ./cmd/xbctl
           done
           cd dist
@@ -80,10 +82,20 @@ jobs:
           done
           sha256sum -c ./*.sha256
 
+      # Retain Go symbol metadata: stripped binaries force module-level approximations.
+      - name: Scan built release binaries
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          for binary in dist/*linux-*; do
+            case "$binary" in *.sha256) continue ;; esac
+            go version -m "$binary"
+            govulncheck -mode=binary "$binary"
+          done
       - name: Publish to CPP
         env:
           GH_TOKEN: ${{ secrets.CPP_RELEASE_TOKEN }}
           GH_REPO: ClaraCora/CPP
+          RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
         run: |
           test -n "$GH_TOKEN" || { echo "CPP_RELEASE_TOKEN is not configured" >&2; exit 1; }
           VERSION=$(tr -d '\r\n' < VERSION)
@@ -96,6 +108,18 @@ jobs:
           {"component":"corade","version":"$BUILD_VERSION","source_repository":"$GITHUB_REPOSITORY","source_commit":"$GITHUB_SHA"}
           EOF
 
+          test -n "$RELEASE_SIGNING_PRIVATE_KEY" || { echo "RELEASE_SIGNING_PRIVATE_KEY is not configured" >&2; exit 1; }
+          umask 077
+          signing_key=$(mktemp)
+          trap 'rm -f "$signing_key"' EXIT
+          printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" >"$signing_key"
+          openssl pkey -in "$signing_key" -pubout | cmp - internal/releaseverify/release-public-key.pem
+          cp install.sh dist/corade-install.sh
+          (cd dist && find . -maxdepth 1 -type f ! -name release-manifest.sha256 ! -name release-manifest.sha256.sig -printf '%f\0' | LC_ALL=C sort -z | xargs -0 sha256sum >release-manifest.sha256)
+          openssl pkeyutl -sign -inkey "$signing_key" -rawin -in dist/release-manifest.sha256 -out dist/release-manifest.sha256.sig
+          openssl pkeyutl -verify -pubin -inkey internal/releaseverify/release-public-key.pem -rawin -in dist/release-manifest.sha256 -sigfile dist/release-manifest.sha256.sig
+          rm -f "$signing_key"
+
           VERSION_TAG="corade-$VERSION"
           if gh release view "$VERSION_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
             mkdir -p existing
@@ -104,7 +128,7 @@ jobs:
               echo "CPP release $VERSION_TAG already belongs to another commit; bump VERSION before publishing" >&2
               exit 1
             }
-            gh release upload "$VERSION_TAG" dist/* --repo "$GH_REPO" --clobber
+            echo "Immutable version already exists for this source commit; keeping its published assets"
           else
             gh release create "$VERSION_TAG" dist/* --repo "$GH_REPO" --title "Corade $VERSION" --notes "Corade $BUILD_VERSION. Checksums and source metadata are included in the assets."
           fi

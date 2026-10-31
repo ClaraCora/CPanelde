@@ -36,6 +36,23 @@ func TestBuildUpgradeScriptRejectsShellMetacharacters(t *testing.T) {
 	}
 }
 
+func TestUpgradeInstallerAuthenticatesImmutableReleaseBeforeExecution(t *testing.T) {
+	script := signedUpgradeInstaller("v2.0.8+fixture")
+	for _, required := range []string{"releases/download/corade-v2.0.8", "release-manifest.sha256.sig", "verify-release", "--version 'v2.0.8+fixture'"} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("missing %q in authenticated upgrade", required)
+		}
+	}
+	if strings.Contains(script, "raw.githubusercontent.com") || strings.Index(script, "verify-release") > strings.Index(script, `/bin/sh "$upgrade_script"`) {
+		t.Fatal("installer executes before signature verification or uses mutable main")
+	}
+	for _, version := range []string{"latest", "main", "v2.0.8;echo injected"} {
+		if strings.Contains(signedUpgradeInstaller(version), "curl") {
+			t.Fatalf("unsafe target %q downloads code", version)
+		}
+	}
+}
+
 func TestBuildUpgradeScriptCapturesFailureOutput(t *testing.T) {
 	script := buildUpgradeScript("v2.0.5+build", "task-1", "/etc/corade/agent-upgrade-result")
 	for _, expected := range []string{"2>&1", "upgrade-result.error", "tail -c 1800", "result_status", "upgrade-result"} {

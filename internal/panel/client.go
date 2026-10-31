@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/controlsecurity"
 	"github.com/ClaraCora/CPanelde/internal/nlog"
 	"github.com/go-viper/mapstructure/v2"
 )
@@ -52,7 +53,8 @@ func NewClient(cfg config.PanelConfig) *Client {
 		nodeType:  cfg.NodeType,
 		machineID: cfg.MachineID,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			CheckRedirect: controlsecurity.RejectRedirect,
+			Timeout:       30 * time.Second,
 			Transport: &http.Transport{
 				MaxIdleConns:        10,
 				MaxIdleConnsPerHost: 10,
@@ -92,7 +94,7 @@ func (c *Client) Handshake() (*HandshakeResponse, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("handshake status %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("handshake status %d: %s", resp.StatusCode, controlsecurity.RedactError(fmt.Errorf("%s", body), c.token))
 	}
 
 	var hs HandshakeResponse
@@ -240,7 +242,7 @@ func (c *Client) GetConfig() (*NodeConfig, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, controlsecurity.RedactError(fmt.Errorf("%s", body), c.token))
 	}
 
 	var raw map[string]interface{}
@@ -288,7 +290,7 @@ func (c *Client) GetUsers() ([]User, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, controlsecurity.RedactError(fmt.Errorf("%s", body), c.token))
 	}
 
 	var usersResp UsersResponse
@@ -353,7 +355,7 @@ func (c *Client) GetMachineNodes() (*MachineNodesResponse, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("machine nodes status %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("machine nodes status %d: %s", resp.StatusCode, controlsecurity.RedactError(fmt.Errorf("%s", body), c.token))
 	}
 
 	var out MachineNodesResponse
@@ -429,13 +431,16 @@ func (c *Client) postJSON(path string, payload map[string]interface{}) error {
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("status %d: %s", resp.StatusCode, respBody)
+		return fmt.Errorf("status %d: %s", resp.StatusCode, controlsecurity.RedactError(fmt.Errorf("%s", respBody), c.token))
 	}
 	c.apiSuccess.Add(1)
 	return nil
 }
 
 func (c *Client) doRequest(method, path string, body []byte, ifNoneMatch string) (*http.Response, error) {
+	if err := controlsecurity.ValidateEndpoint(c.baseURL, false); err != nil {
+		return nil, err
+	}
 	fullURL := c.baseURL + path
 
 	var bodyReader io.Reader
@@ -452,7 +457,7 @@ func (c *Client) doRequest(method, path string, body []byte, ifNoneMatch string)
 
 	req, err := http.NewRequest(method, fullURL, bodyReader)
 	if err != nil {
-		return nil, err
+		return nil, controlsecurity.RedactError(err, c.token)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -466,7 +471,7 @@ func (c *Client) doRequest(method, path string, body []byte, ifNoneMatch string)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		c.apiFailure.Add(1)
-		return nil, err
+		return nil, controlsecurity.RedactError(err, c.token)
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {

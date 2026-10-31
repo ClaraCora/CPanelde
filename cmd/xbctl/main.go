@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -160,6 +159,8 @@ func run(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "verify-release":
+		return runVerifyRelease(args[1:])
 	case "status":
 		return runStatus()
 	case "list":
@@ -403,11 +404,26 @@ func runUpgrade(args []string) error {
 	}
 
 	fmt.Println("Starting upgrade...")
+	resolved, err := resolveSignedReleaseVersion(version)
+	if err != nil {
+		return fmt.Errorf("resolve authenticated release: %w", err)
+	}
+	version = resolved
 
 	binaryDir := filepath.Dir(defaultBinaryPath)
 	cliDir := filepath.Dir(defaultCLIPath)
-	newBinary := filepath.Join(binaryDir, ".corade.new")
-	newCLI := filepath.Join(cliDir, ".coradectl.new")
+	binaryStage, err := os.MkdirTemp(binaryDir, ".corade-upgrade-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(binaryStage)
+	cliStage, err := os.MkdirTemp(cliDir, ".coradectl-upgrade-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(cliStage)
+	newBinary := filepath.Join(binaryStage, "corade")
+	newCLI := filepath.Join(cliStage, "coradectl")
 
 	binaryArtifact := fmt.Sprintf("corade-linux-%s", arch)
 	cliArtifact := fmt.Sprintf("coradectl-linux-%s", arch)
@@ -607,17 +623,29 @@ func ensureRoot(cmd string) error {
 }
 
 func resolveDownloadURL(artifact, version string) string {
-	tag := version
+	tag := strings.SplitN(version, "+", 2)[0]
 	if tag == "latest" {
 		tag = "corade-latest"
 	} else if !strings.HasPrefix(tag, "corade-") {
-		tag = "corade-" + tag
+		tag = "corade-" + strings.SplitN(tag, "+", 2)[0]
 	}
 	return downloadBase + "/download/" + tag + "/" + artifact
 }
 
 func downloadFile(url, dest string) error {
-	client := &http.Client{Timeout: 120 * time.Second}
+	return downloadFileBounded(url, dest, 512<<20)
+}
+
+func downloadFileBounded(url, dest string, limit int64) error {
+	client := &http.Client{Timeout: 120 * time.Second, CheckRedirect: func(r *http.Request, via []*http.Request) error {
+		if r.URL.Scheme != "https" || len(via) >= 10 {
+			return errors.New("unsafe release redirect")
+		}
+		return nil
+	}}
+	if !strings.HasPrefix(url, "https://") {
+		return errors.New("release downloads require HTTPS")
+	}
 	resp, err := client.Get(url)
 	if err != nil {
 		return err
@@ -631,53 +659,15 @@ func downloadFile(url, dest string) error {
 		return err
 	}
 	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
+	written, err := io.Copy(f, io.LimitReader(resp.Body, limit+1))
+	if written > limit {
+		return errors.New("release download exceeds size limit")
+	}
 	return err
 }
 
 func downloadVerifiedArtifact(artifact, version, destination string) error {
-	artifactURL := resolveDownloadURL(artifact, version)
-	if err := downloadFile(artifactURL, destination); err != nil {
-		return err
-	}
-	checksumPath := destination + ".sha256"
-	defer os.Remove(checksumPath)
-	if err := downloadFile(resolveDownloadURL(artifact+".sha256", version), checksumPath); err != nil {
-		os.Remove(destination)
-		return fmt.Errorf("download checksum: %w", err)
-	}
-	checksumData, err := os.ReadFile(checksumPath)
-	if err != nil {
-		os.Remove(destination)
-		return err
-	}
-	fields := strings.Fields(string(checksumData))
-	if len(fields) == 0 || len(fields[0]) != sha256.Size*2 {
-		os.Remove(destination)
-		return errors.New("invalid SHA-256 checksum file")
-	}
-	file, err := os.Open(destination)
-	if err != nil {
-		os.Remove(destination)
-		return err
-	}
-	hash := sha256.New()
-	_, copyErr := io.Copy(hash, file)
-	closeErr := file.Close()
-	if copyErr != nil {
-		os.Remove(destination)
-		return copyErr
-	}
-	if closeErr != nil {
-		os.Remove(destination)
-		return closeErr
-	}
-	actual := fmt.Sprintf("%x", hash.Sum(nil))
-	if !strings.EqualFold(actual, fields[0]) {
-		os.Remove(destination)
-		return fmt.Errorf("SHA-256 mismatch for %s", artifact)
-	}
-	return nil
+	return downloadSignedArtifact(artifact, version, destination)
 }
 
 func cleanupFiles(a, b string, err error) error {

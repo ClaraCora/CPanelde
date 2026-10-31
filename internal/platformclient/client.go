@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ClaraCora/CPanelde/internal/agentv2"
+	"github.com/ClaraCora/CPanelde/internal/controlsecurity"
 )
 
 type APIError struct {
@@ -61,7 +62,8 @@ func New(baseURL, token string, machineID ...string) *Client {
 		token:     token,
 		machineID: configuredMachineID,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			CheckRedirect: controlsecurity.RejectRedirect,
+			Timeout:       30 * time.Second,
 			Transport: &http.Transport{
 				MaxIdleConns:        10,
 				MaxIdleConnsPerHost: 10,
@@ -80,7 +82,16 @@ func (c *Client) EnableV2(panelPublicKey, identityPath string) error {
 		return err
 	}
 	c.v2 = credentials
+	c.token = ""
 	return nil
+}
+
+func (c *Client) SetEnrollmentCleanup(cleanup func() error) {
+	if c.v2 != nil {
+		c.v2.mu.Lock()
+		c.v2.onEnrolled = cleanup
+		c.v2.mu.Unlock()
+	}
 }
 
 func (c *Client) V2Credentials() *V2Credentials { return c.v2 }
@@ -386,9 +397,9 @@ func establishV2Session(ctx context.Context, httpClient *http.Client, endpoint s
 		return nil, errors.New("V2 credentials are unavailable")
 	}
 	publicKey, privateKey, enrollmentKey, enrolled := credentials.handshakeIdentity()
-	if forceEnrollment {
-		enrolled = false
-	}
+	// Try the private identity first even if the enrollment response was lost.
+	// A one-use registration credential must never be needed for reconnects.
+	enrolled = !forceEnrollment
 	handshake, err := agentv2.NewClientHandshake(credentials.machineID, publicKey, privateKey, enrollmentKey, enrolled, time.Now().UTC())
 	if err != nil {
 		return nil, err
@@ -411,8 +422,7 @@ func establishV2Session(ctx context.Context, httpClient *http.Client, endpoint s
 	if readErr != nil {
 		return nil, readErr
 	}
-	if resp.StatusCode == http.StatusUnauthorized && enrolled && !forceEnrollment {
-		credentials.markNeedsEnrollment()
+	if resp.StatusCode == http.StatusUnauthorized && !forceEnrollment && len(enrollmentKey) >= 32 {
 		return establishV2Session(ctx, httpClient, endpoint, credentials, true)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

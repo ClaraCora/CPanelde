@@ -59,6 +59,8 @@ func New(cfg *config.Config, version string) *Orchestrator {
 	}
 	if initErr == nil && panelPublicKey != "" {
 		initErr = client.EnableV2(panelPublicKey, identityPath)
+		cfg.Control.PanelPublicKey = panelPublicKey
+		client.SetEnrollmentCleanup(cfg.ForgetEnrollmentToken)
 	}
 	return &Orchestrator{
 		cfg: cfg, version: version, client: client, initErr: initErr,
@@ -82,6 +84,8 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		if err := o.client.EnableV2(handshake.Security.PanelPublicKey, identityPath); err != nil {
 			return fmt.Errorf("enable encrypted device platform client: %w", err)
 		}
+		o.cfg.Control.PanelPublicKey = handshake.Security.PanelPublicKey
+		o.client.SetEnrollmentCleanup(o.cfg.ForgetEnrollmentToken)
 		handshake, err = o.client.Handshake(ctx)
 		if err != nil {
 			return fmt.Errorf("device platform V2 handshake: %w", err)

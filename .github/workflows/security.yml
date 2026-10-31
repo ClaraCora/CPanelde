@@ -1,0 +1,49 @@
+name: Security gates
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install pinned security tools
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          go install github.com/gitleaks/gitleaks/v8@v8.30.1
+      - name: Scan Git history for credentials
+        run: |
+          gitleaks git --redact --config .gitleaks.toml
+          gitleaks dir . --redact --config .gitleaks.toml
+      - name: Vet and test
+        run: |
+          go vet ./...
+          go mod verify
+          go test -race ./...
+          go test -race github.com/sagernet/sing-box/transport/v2rayhttp
+          go test -tags with_quic,with_utls,with_wireguard,with_acme,with_clash_api ./...
+      - name: Verify signed installer behavior
+        run: |
+          sh -n install.sh time-sync-check.sh
+          sh .github/tests/installer-signature-test.sh install.sh
+      - name: Scan production Go paths for both release architectures
+        env:
+          GOOS: linux
+          CGO_ENABLED: "0"
+        run: |
+          for arch in amd64 arm64; do
+            GOARCH="$arch" govulncheck -tags=with_quic,with_utls,with_wireguard,with_acme,with_clash_api ./...
+          done

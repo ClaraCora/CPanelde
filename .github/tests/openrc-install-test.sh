@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-apk add --no-cache busybox-extras curl openrc >/dev/null
+apk add --no-cache busybox-extras curl openssl openrc >/dev/null
 mkdir -p /run/openrc /tmp/corade-health
 touch /run/openrc/softlevel /tmp/corade-health/healthz
 
@@ -27,6 +27,7 @@ chmod 755 /tmp/corade-good /tmp/corade-bad
 /bin/sh /src/install.sh \
   --control-url https://panel.example.com \
   --communication-key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --panel-public-key AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
   --machine-id mch_openrc_test \
   --binary /tmp/corade-good
 

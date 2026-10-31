@@ -25,7 +25,8 @@ Thumbs.db
 vendor/
 config.json
 benchmark/
-third_party
+# These patched modules are release inputs and must be version controlled.
+!/third_party/**
 bench-results
 internal/kernel/singbox/config_bench_test.go
 internal/kernel/xray/config_bench_test.go

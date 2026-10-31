@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-apk add --no-cache curl >/dev/null
+apk add --no-cache curl openssl >/dev/null
 mkdir -p /run/systemd/system
 
 cat >/usr/local/bin/systemctl <<'EOF'
@@ -26,6 +26,7 @@ chmod 755 /usr/local/bin/systemctl /usr/local/bin/journalctl /tmp/corade-good
 /bin/sh /src/install.sh \
   --control-url https://panel.example.com \
   --communication-key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --panel-public-key AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
   --machine-id mch_systemd_test \
   --health-port 0 \
   --binary /tmp/corade-good

@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
 const (
-	agentUpgradeScriptPrefix = `upgrade_script=$(mktemp) || exit $?; trap "rm -f \"$upgrade_script\"" EXIT; curl -fsSL https://raw.githubusercontent.com/ClaraCora/CPP/main/corade-install.sh -o "$upgrade_script" || exit $?; /bin/sh "$upgrade_script"`
+	agentUpgradeScriptPrefix = `umask 077; upgrade_dir=$(mktemp -d) || exit $?; trap 'rm -rf -- "$upgrade_dir"' EXIT; upgrade_script="$upgrade_dir/corade-install.sh"; `
 	upgradeLogDir            = "/var/log/corade"
 	upgradeLogPath           = "/var/log/corade/upgrade.log"
 )
@@ -92,10 +93,7 @@ func buildUpgradeCommand(ctx context.Context, initSystem upgradeInitSystem, unit
 }
 
 func buildUpgradeScript(targetVersion, taskID, resultPath string) string {
-	installer := agentUpgradeScriptPrefix + " upgrade"
-	if strings.TrimSpace(targetVersion) != "" {
-		installer += " --version " + shellQuote(strings.TrimSpace(targetVersion))
-	}
+	installer := signedUpgradeInstaller(targetVersion)
 	if taskID == "" || resultPath == "" {
 		return installer
 	}
@@ -122,17 +120,20 @@ func buildUpgradeScript(targetVersion, taskID, resultPath string) string {
 // accepted alphabet deliberately narrow so a server-side value can never
 // inject another command into the installer.
 func validateUpgradeVersion(version string) error {
-	if len(version) > 128 {
-		return fmt.Errorf("invalid upgrade target version: too long")
-	}
-	for _, char := range version {
-		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') || char == '.' || char == '-' || char == '_' || char == '+' {
-			continue
-		}
-		return fmt.Errorf("invalid upgrade target version %q", version)
+	if len(version) > 128 || !regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:\+[a-zA-Z0-9._-]+)?$`).MatchString(version) {
+		return fmt.Errorf("invalid upgrade target version")
 	}
 	return nil
+}
+
+func signedUpgradeInstaller(version string) string {
+	if validateUpgradeVersion(version) != nil {
+		return "echo 'an exact signed release version is required' >&2; exit 1"
+	}
+	base := "https://github.com/ClaraCora/CPP/releases/download/corade-" + strings.SplitN(version, "+", 2)[0]
+	return agentUpgradeScriptPrefix + "release_base=" + shellQuote(base) + "; " +
+		`for asset in corade-install.sh release-manifest.sha256 release-manifest.sha256.sig agent-version.txt; do curl --proto '=https' --proto-redir '=https' -fsSL --max-time 120 --max-filesize 1048576 "$release_base/$asset" -o "$upgrade_dir/$asset" || exit $?; done; ` +
+		`/usr/local/bin/coradectl verify-release --directory "$upgrade_dir" --artifact corade-install.sh --file "$upgrade_script" --version ` + shellQuote(version) + ` || exit $?; /bin/sh "$upgrade_script" upgrade --version ` + shellQuote(version)
 }
 
 func shellQuote(value string) string {

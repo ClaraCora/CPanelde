@@ -15,10 +15,10 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -31,7 +31,7 @@ jobs:
           sh -n install.sh
           sh -n time-sync-check.sh
           sh .github/tests/installer-checksum-test.sh install.sh
-          docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh -c 'apk add --no-cache curl >/dev/null && sh /src/.github/tests/installer-checksum-test.sh /src/install.sh'
+          docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh -c 'apk add --no-cache curl openssl >/dev/null && sh /src/.github/tests/installer-checksum-test.sh /src/install.sh'
           CGO_ENABLED=0 go build -o /tmp/coradectl ./cmd/xbctl
           docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh -n /src/install.sh
           docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh -n /src/time-sync-check.sh
@@ -50,10 +50,10 @@ jobs:
           - goos: linux
             goarch: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: 'go.mod'
           cache: true

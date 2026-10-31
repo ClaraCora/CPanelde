@@ -1,5 +1,7 @@
 # Corade
 
+> 安装前先按 [安全构建与迁移](SECURITY.md) 完成信任建立。以下本地脚本须来自已审核源码或已验签发行包；公网下载内容不能直接管道交给 root。
+
 Corade is the node agent for the CPanel device management platform. It runs
 `sing-box` or `xray-core` nodes assigned by CPanel and synchronizes node
 configuration, users, devices, traffic, and machine health.
@@ -31,25 +33,26 @@ go build -trimpath -tags "with_quic with_utls with_wireguard with_acme with_clas
 
 ## One-click installation
 
-The command generated on a CPanel server page contains the required server ID
-and communication key. Public installers and release binaries are hosted in
+The command generated on a CPanel server page contains the required server ID, pinned panel public key,
+and a machine-bound one-use enrollment credential (30-minute validity). Public installers and release binaries are hosted in
 the CPP distribution repository:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ClaraCora/CPP/main/corade-install.sh | sudo sh -s -- \
+sudo sh ./install.sh \
   --control-url https://panel.example.com \
-  --communication-key YOUR_COMMUNICATION_KEY \
-  --machine-id mch_example
+  --communication-key ONE_USE_MACHINE_ENROLLMENT_KEY \
+  --machine-id mch_example \
+  --panel-public-key PINNED_PANEL_PUBLIC_KEY
 ```
 
 Upgrade an installed Agent without entering its communication key again:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ClaraCora/CPP/main/corade-install.sh | sudo sh -s -- upgrade
+sudo coradectl upgrade
 ```
 
 The installer supports Linux amd64 and arm64 with either systemd or Alpine
-OpenRC. It downloads checksummed Agent and `coradectl` binaries from the
+OpenRC. It authenticates the signed manifest before installing Agent and `coradectl` binaries from the
 selected GitHub release. Service startup and failed-upgrade rollback use the
 detected init system automatically.
 
@@ -72,7 +75,7 @@ previous Agent.
 
 ## Device Platform Configuration
 
-Create an Agent token in CPanel, expose it through an environment variable, and
+Generate a machine enrollment command in CPanel, expose it through an environment variable, and
 point Corade at the public CPanel URL:
 
 ```yaml
@@ -80,6 +83,8 @@ control:
   mode: "device-platform"
   url: "https://panel.example.com"
   token_env: "CORADE_AGENT_TOKEN"
+  machine_id: "mch_example"
+  panel_public_key: "PINNED_PANEL_PUBLIC_KEY"
 
 kernel:
   type: "singbox"
@@ -91,7 +96,7 @@ log:
 ```
 
 ```bash
-export CORADE_AGENT_TOKEN='agent-token-from-cpanel'
+export CORADE_AGENT_TOKEN='one-use-machine-enrollment-key'
 ./bin/corade -c ./config.yml
 ```
 
@@ -112,9 +117,11 @@ added.
 
 ## Control Protocol
 
-The Agent control surface is rooted at `/ca/cc`. Corade authenticates only with
-`Authorization: Bearer <agent-token>` and protocol version `1.0`; it does not
-send machine IDs, node types, or tokens in URLs.
+The Agent control surface is rooted at `/ca/cc`. V2 pins the panel identity, enrolls
+with a one-use machine credential, and reconnects with its persisted private key.
+Successful enrollment deletes the bootstrap credential. Any explicit legacy
+compatibility is restricted by the panel; V2 machines cannot authenticate through it.
+Control endpoints require HTTPS/WSS outside numeric loopback addresses.
 
 ## Extensions
 

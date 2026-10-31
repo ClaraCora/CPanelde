@@ -11,6 +11,8 @@ func TestResolveDownloadURLUsesCPPComponentTags(t *testing.T) {
 		{name: "latest", version: "latest", want: "https://github.com/ClaraCora/CPP/releases/download/corade-latest/corade-linux-amd64"},
 		{name: "semantic version", version: "v2.0.3", want: "https://github.com/ClaraCora/CPP/releases/download/corade-v2.0.3/corade-linux-amd64"},
 		{name: "component tag", version: "corade-v2.0.3", want: "https://github.com/ClaraCora/CPP/releases/download/corade-v2.0.3/corade-linux-amd64"},
+		{name: "signed build version", version: "v2.0.3+abc123", want: "https://github.com/ClaraCora/CPP/releases/download/corade-v2.0.3/corade-linux-amd64"},
+		{name: "component build version", version: "corade-v2.0.3+abc123", want: "https://github.com/ClaraCora/CPP/releases/download/corade-v2.0.3/corade-linux-amd64"},
 	}
 
 	for _, testCase := range cases {

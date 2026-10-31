@@ -1,0 +1,175 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Deterministic bootstrap key in the historical identity persistence unit test"
+condition = "AND"
+paths = ['''internal/platformclient/v2_credentials_test\.go$''']
+regexes = ['''0123456789abcdef0123456789abcdef''']
+
+[[allowlists]]
+description = "Generated dependencies and compiled frontend output"
+paths = ['''(^|/)node_modules/''', '''^web/dist/''']
+
+# Reviewed upstream public examples and non-secret constants.
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/common/sniff/quic\.go$''']
+regexes = ['''^\s*keyLabel\ =\ qtls\.HKDFLabelKeyV1\s*$''', '''^\s*keyLabel\ =\ qtls\.HKDFLabelKeyV2\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/inbound/anytls\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg=="\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/inbound/anytls\.zh\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg=="\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/inbound/shadowsocks\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg==",\s*$''', '''^\s*"password":\ "PCD2Z4o12bKUoFa3cC97Hw=="\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/inbound/shadowsocks\.zh\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg==",\s*$''', '''^\s*"password":\ "PCD2Z4o12bKUoFa3cC97Hw=="\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/inbound/shadowtls\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg=="\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/inbound/shadowtls\.zh\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg=="\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/inbound/trojan\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg=="\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/inbound/trojan\.zh\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg=="\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/outbound/anytls\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg==",\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/outbound/anytls\.zh\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg==",\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/outbound/shadowsocks\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg==",\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/outbound/shadowsocks\.zh\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg==",\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/outbound/trojan\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg==",\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/outbound/trojan\.zh\.md$''']
+regexes = ['''^\s*"password":\ "8JCsPssfgS8tiRwiMlhARg==",\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/outbound/wireguard\.md$''']
+regexes = ['''^\s*"pre_shared_key":\ "31aIhAPwktDGpH4JDhA8GNvjFXEf/a6\+UaQRyOAiyfM=",\s*$''', '''^\s*"private_key":\ "YNXtAzepDqRv9H52osJVDQnznT5AM11eCK3ESpwSt04=",\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/outbound/wireguard\.zh\.md$''']
+regexes = ['''^\s*"pre_shared_key":\ "31aIhAPwktDGpH4JDhA8GNvjFXEf/a6\+UaQRyOAiyfM=",\s*$''', '''^\s*"private_key":\ "YNXtAzepDqRv9H52osJVDQnznT5AM11eCK3ESpwSt04=",\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/shared/tls\.md$''']
+regexes = ['''^\s*"private_key":\ "UuMBgl7MXTPx9inmQp2UC7Jcnwc6XYbwDNebonM\-FCc",\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/docs/configuration/shared/tls\.zh\.md$''']
+regexes = ['''^\s*"private_key":\ "UuMBgl7MXTPx9inmQp2UC7Jcnwc6XYbwDNebonM\-FCc",\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/release/config/config\.json$''']
+regexes = ['''^\s*"password":\ "Gn1JUS14bLUHgv1cWDDp4A==",\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/sing\-box/service/ccm/credential\.go$''']
+regexes = ['''^\s*oauth2ClientID\ \ \ \ \ \ \ \ \ \ =\ "9d1c250a\-e61b\-44d9\-88ed\-5944d1962f5e"\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/xray\-core/infra/conf/wireguard_test\.go$''']
+regexes = ['''^\s*"secretKey":\ "uJv5tZMDltsiYEn\+kUwb0Ll/CXWhMkaSCWWhfPEZM3A=",\s*$''', '''^\s*SecretKey:\ "b89bf9b5930396db226049fe914c1bd0b97f0975a13246920965a17cf1193370",\s*$''']
+
+[[allowlists]]
+description = "Reviewed public upstream example or protocol constant; see third_party/README.md"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third_party/xray\-core/transport/internet/finalmask/salamander/salamander\.go$''']
+regexes = ['''^\s*smKeyLen\ \ \ \ =\ blake2b\.Size256\s*$''']
