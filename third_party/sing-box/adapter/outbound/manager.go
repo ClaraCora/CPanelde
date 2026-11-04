@@ -300,6 +300,16 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 			panic("invalid inbound index")
 		}
 		m.outbounds = append(m.outbounds[:existsIndex], m.outbounds[existsIndex+1:]...)
+		// Replacing a chained outbound must remove its old dependency edges.
+		// Otherwise a later deletion falsely reports an upstream still in use.
+		for _, dependency := range existsOutbound.Dependencies() {
+			m.dependByTag[dependency] = common.Filter(m.dependByTag[dependency], func(it string) bool {
+				return it != tag
+			})
+			if len(m.dependByTag[dependency]) == 0 {
+				delete(m.dependByTag, dependency)
+			}
+		}
 	}
 	m.outbounds = append(m.outbounds, outbound)
 	m.outboundByTag[tag] = outbound

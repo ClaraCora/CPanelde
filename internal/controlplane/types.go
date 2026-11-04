@@ -35,6 +35,7 @@ type APIMetrics struct {
 }
 
 type Bootstrap struct {
+	Revision     int
 	PushInterval int
 	PullInterval int
 	Push         PushClient
@@ -44,11 +45,29 @@ type Bootstrap struct {
 }
 
 type Snapshot struct {
-	Config *model.NodeSpec
-	Users  []model.UserSpec
+	Revision int
+	Config   *model.NodeSpec
+	Users    []model.UserSpec
+}
+
+// ApplicationReporter is optional: local/legacy control planes need not
+// implement runtime acknowledgements. Revision is carried beside config so
+// receiving a newer revision does not itself change the configuration hash.
+type ApplicationResult struct {
+	Revision int    `json:"revision"`
+	Status   string `json:"status"`
+	Stage    string `json:"stage"`
+	Error    string `json:"error,omitempty"`
+}
+
+type ApplicationReporter interface {
+	ReportApplication(ApplicationResult)
 }
 
 type ReportPayload struct {
+	// Captured together with BatchID so retries remain byte-identical even if
+	// another configuration is applied while a report response is unknown.
+	AppliedRevision int
 	// BatchID is stable across retries of the same flushed report. Control
 	// planes that support idempotency use it as their request key; other
 	// control planes may ignore it.

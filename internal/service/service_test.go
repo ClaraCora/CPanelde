@@ -63,6 +63,7 @@ func TestReportBatchRetainsPayloadAndKeyAcrossLostResponse(t *testing.T) {
 	cp := &reportTestControlPlane{failNext: true}
 	s := newService(&config.Config{}, cp)
 	s.kernel = &fakeKernel{running: true}
+	s.appliedRevision = 1
 	s.tracker.Process(map[int][2]int64{7: {100, 200}}, nil, 1)
 
 	first := s.beginReport()
@@ -75,12 +76,16 @@ func TestReportBatchRetainsPayloadAndKeyAcrossLostResponse(t *testing.T) {
 	// New traffic arrives while the old response is unknown. beginReport must
 	// return the exact old batch so the panel's idempotency key remains valid.
 	s.tracker.Process(map[int][2]int64{7: {150, 250}}, nil, 1)
+	s.appliedRevision = 2
 	retry := s.beginReport()
 	if retry.BatchID != first.BatchID || retry.OccurredAt != first.OccurredAt {
 		t.Fatalf("retry identity changed: first=%+v retry=%+v", first, retry)
 	}
 	if retry.Traffic[7] != first.Traffic[7] {
 		t.Fatalf("retry traffic changed: first=%v retry=%v", first.Traffic, retry.Traffic)
+	}
+	if retry.AppliedRevision != 1 {
+		t.Fatal("report retry changed the captured applied revision")
 	}
 	// Once the old batch is accepted, the next call creates a new identity and
 	// includes traffic accumulated after the original flush.
@@ -93,6 +98,9 @@ func TestReportBatchRetainsPayloadAndKeyAcrossLostResponse(t *testing.T) {
 	if next.BatchID == first.BatchID {
 		t.Fatal("next report reused completed batch id")
 	}
+	if next.AppliedRevision != 2 {
+		t.Fatal("new report did not capture current applied revision")
+	}
 	if next.Traffic[7] != [2]int64{50, 50} {
 		t.Fatalf("next traffic = %v, want [50 50]", next.Traffic)
 	}
@@ -102,10 +110,12 @@ type fakeKernel struct {
 	running bool
 
 	startErr  error
+	reloadErr error
 	updateErr error
 	addErr    error
 
 	startCalls  int
+	reloadCalls int
 	updateCalls int
 	addCalls    int
 	removeCalls int
@@ -136,7 +146,8 @@ func (f *fakeKernel) Stop()           { f.running = false }
 func (f *fakeKernel) IsRunning() bool { return f.running }
 func (f *fakeKernel) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls kernel.TLSCert) error {
 	_, _, _ = nodeConfig, users, tls
-	return nil
+	f.reloadCalls++
+	return f.reloadErr
 }
 func (f *fakeKernel) AddUsers(users []model.UserSpec) (int, error) {
 	f.addCalls++

@@ -192,7 +192,7 @@ func recycleOldBox(oldBox *box.Box, oldCancel context.CancelFunc, oldCtx context
 // Reload hot-swaps the inbound users and routing rules without restarting the box.
 // Routes, outbounds, and the connTracker stay alive so in-flight connections
 // continue to be tracked correctly.
-func (s *SingBox) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls kernel.TLSCert) error {
+func (s *SingBox) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls kernel.TLSCert) (reloadErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -201,7 +201,7 @@ func (s *SingBox) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls
 	}
 
 	cfgMap := buildConfig(s.cfg, nodeConfig, users, tls)
-	data, err := json.Marshal(cfgMap)
+	data, err := reloadConfigBytes(cfgMap)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
@@ -221,9 +221,55 @@ func (s *SingBox) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls
 		return fmt.Errorf("router not available")
 	}
 
+	previousBytes, err := reloadConfigBytes(buildConfig(s.cfg, s.nodeConfig, s.users, s.tls))
+	if err != nil {
+		return fmt.Errorf("build previous runtime: %w", err)
+	}
+	previousOpts, err := singJSON.UnmarshalExtendedContext[option.Options](s.ctx, previousBytes)
+	if err != nil {
+		return fmt.Errorf("parse previous runtime: %w", err)
+	}
+	outboundManager := service.FromContext[adapter.OutboundManager](s.ctx)
+	if outboundManager == nil {
+		return fmt.Errorf("outbound manager not available")
+	}
+	inboundsMutated := false
+	defer func() {
+		if reloadErr == nil {
+			return
+		}
+		// A partial manager update is not a successful application. Restore the
+		// previous routes/outbounds/listeners before reporting the failure.
+		if err := replaceOutbounds(s.ctx, outboundManager, router, previousOpts.Outbounds, nil); err != nil {
+			nlog.Core().Error("restore previous outbounds failed", "error", err)
+		}
+		if err := router.UpdateRules(previousOpts.Route.Rules, previousOpts.Route.RuleSet); err != nil {
+			nlog.Core().Error("restore previous routes failed", "error", err)
+		}
+		if inboundsMutated {
+			for _, inbound := range opts.Inbounds {
+				_ = im.Remove(inbound.Tag)
+			}
+			factory := singLog.NewNOPFactory()
+			for _, inbound := range previousOpts.Inbounds {
+				_ = im.Remove(inbound.Tag)
+				logger := factory.NewLogger(fmt.Sprintf("inbound/%s[%s]", inbound.Type, inbound.Tag))
+				if err := im.Create(s.ctx, router, logger, inbound.Tag, inbound.Type, inbound.Options); err != nil {
+					nlog.Core().Error("restore previous inbound failed", "error", err)
+				}
+			}
+		}
+		if err := removeObsoleteOutbounds(outboundManager, opts.Outbounds, previousOpts.Outbounds); err != nil {
+			nlog.Core().Warn("remove rejected outbounds failed", "error", err)
+		}
+	}()
+	if err := replaceOutbounds(s.ctx, outboundManager, router, opts.Outbounds, previousOpts.Outbounds); err != nil {
+		return err
+	}
+
 	// Update routing rules
 	if err := router.UpdateRules(opts.Route.Rules, opts.Route.RuleSet); err != nil {
-		nlog.Core().Debug("routing reload failed", "error", err)
+		return fmt.Errorf("reload routing: %w", err)
 	} else {
 		nlog.Core().Debug("sing-box routing reloaded")
 	}
@@ -232,7 +278,19 @@ func (s *SingBox) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls
 
 	// Configuration hash check for inbound reconstruction
 	tlsChanged := !bytes.Equal(s.tls.CertPEM, tls.CertPEM) || !bytes.Equal(s.tls.KeyPEM, tls.KeyPEM)
-	configChanged := tlsChanged || s.nodeConfig == nil || kernel.ComputeHash(nodeConfig, users) != kernel.ComputeHash(s.nodeConfig, s.users)
+	previousInbounds := inboundFingerprint(previousOpts.Inbounds)
+	nextInbounds := inboundFingerprint(opts.Inbounds)
+	configChanged := tlsChanged || !bytes.Equal(previousInbounds, nextInbounds)
+	wantedInboundTags := make(map[string]bool, len(opts.Inbounds))
+	for _, inbound := range opts.Inbounds {
+		wantedInboundTags[inbound.Tag] = true
+	}
+	for _, inbound := range previousOpts.Inbounds {
+		if !wantedInboundTags[inbound.Tag] {
+			inboundsMutated = true
+			_ = im.Remove(inbound.Tag)
+		}
+	}
 
 	for _, inb := range opts.Inbounds {
 		tag := inb.Tag
@@ -294,11 +352,16 @@ func (s *SingBox) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls
 		// im.Create() cannot atomically swap a TCP listener — it tries to start the
 		// new socket before the old one is closed, causing "address already in use".
 		// The brief listen gap (< 1 ms) is far less disruptive than a full restart.
+		inboundsMutated = true
 		_ = im.Remove(tag) // ignore error when tag doesn't exist yet
 		logger := nopFactory.NewLogger(fmt.Sprintf("inbound/%s[%s]", inb.Type, tag))
 		if err := im.Create(s.ctx, router, logger, tag, inb.Type, inb.Options); err != nil {
 			return fmt.Errorf("recreate inbound %s: %w", tag, err)
 		}
+	}
+
+	if err := removeObsoleteOutbounds(outboundManager, previousOpts.Outbounds, opts.Outbounds); err != nil {
+		return err
 	}
 
 	// Trackers remain registered on the Router (which survives ReloadUsers).

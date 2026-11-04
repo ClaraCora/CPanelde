@@ -45,10 +45,11 @@ func TestDevicePlatformReportReusesBatchIDWhenResponseIsLost(t *testing.T) {
 	defer server.Close()
 
 	cp := NewDevicePlatformControlPlane(platformclient.New(server.URL, "token"), 12, config.KernelConfig{Type: "xray"}, 60, 60, nil, nil)
-	payload := ReportPayload{BatchID: "tel-stable-batch", OccurredAt: "2026-08-24T15:00:00Z", Traffic: map[int][2]int64{9: {123, 456}}}
+	payload := ReportPayload{AppliedRevision: 1, BatchID: "tel-stable-batch", OccurredAt: "2026-08-24T15:00:00Z", Traffic: map[int][2]int64{9: {123, 456}}}
 	if err := cp.Report(payload); err == nil {
 		t.Fatal("expected the first report to observe a lost response")
 	}
+	cp.revision.Store(2) // a new kernel config is applied before retrying
 	if err := cp.Report(payload); err != nil {
 		t.Fatalf("retry report: %v", err)
 	}
@@ -135,17 +136,21 @@ func TestDevicePlatformControlPlaneSnapshotAndReports(t *testing.T) {
 	if _, err := cp.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := cp.Report(ReportPayload{Traffic: map[int][2]int64{9: {100, 200}}}); err != nil {
+	if got := cp.revision.Load(); got != 0 {
+		t.Fatalf("fetching a snapshot acknowledged revision %d before the kernel applied it", got)
+	}
+	cp.ReportApplication(ApplicationResult{Revision: 5, Status: "applied", Stage: "kernel"})
+	if err := cp.Report(ReportPayload{AppliedRevision: 5, Traffic: map[int][2]int64{9: {100, 200}}}); err != nil {
 		t.Fatal(err)
 	}
 	cp.ReportDevices(nil, map[int][]string{9: {"192.0.2.10"}})
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(paths) != 6 {
+	if len(paths) != 8 {
 		t.Fatalf("paths = %v", paths)
 	}
-	if len(telemetryTypes) != 2 || telemetryTypes[0] != "node.telemetry" || telemetryTypes[1] != "node.devices" {
+	if len(telemetryTypes) != 4 || telemetryTypes[0] != "node.application" || telemetryTypes[1] != "node.application" || telemetryTypes[2] != "node.telemetry" || telemetryTypes[3] != "node.devices" {
 		t.Fatalf("telemetry types = %v", telemetryTypes)
 	}
 	if reportedRevision != float64(5) {

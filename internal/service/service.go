@@ -40,8 +40,11 @@ type Service struct {
 	speedTracker *limiter.SpeedTracker
 	cert         *cert.Manager
 
-	lastConfig *model.NodeSpec
-	lastUsers  []model.UserSpec
+	lastConfig      *model.NodeSpec
+	lastUsers       []model.UserSpec
+	desiredRevision int
+	appliedRevision int
+	lastKernelError error
 
 	// nodeLog is the logger with node context for this service instance.
 	nodeLog *nlog.NodeLog
@@ -73,6 +76,7 @@ type Service struct {
 	wsCancel         context.CancelFunc             // cancels the WS client goroutine
 	wsDisconnectAt   time.Time                      // when WS last disconnected (zero if connected)
 	wsResyncPending  atomic.Bool
+	reconcileNeeded  atomic.Bool // retry failed application even while WS stays connected
 	machineMailbox   *controlplane.NodeMailbox
 	machineMailboxCh <-chan struct{}
 
@@ -89,6 +93,7 @@ type Service struct {
 
 // pullResult carries the outcome of an async pullViaAPI back to the main goroutine.
 type pullResult struct {
+	revision    int
 	config      *model.NodeSpec
 	users       []model.UserSpec
 	configHash  string
@@ -219,12 +224,12 @@ func (s *Service) Run(ctx context.Context) error {
 			s.reportDevices()
 
 		case <-pullTicker.C:
-			// When WebSocket is connected, skip REST polling entirely.
-			// Config/user updates arrive via WS push.
-			if s.wsClient != nil && s.wsClient.IsConnected() {
+			// Healthy WebSocket updates avoid polling. Failed application or
+			// missed reconciliation keeps the REST retry path active.
+			if s.wsClient != nil && s.wsClient.IsConnected() && !s.reconcileNeeded.Load() {
 				continue
 			}
-			nlog.Core().Debug("polling from API (ws not connected)")
+			nlog.Core().Debug("polling control plane for fallback or reconciliation")
 			s.pullViaAPIAsync(ctx)
 
 		case result := <-s.pullResults:
@@ -289,7 +294,9 @@ func (s *Service) initialSetup(ctx context.Context) error {
 		}
 		return fmt.Errorf("initial config is nil")
 	}
+	s.desiredRevision = bootstrap.Revision
 	if err := validateNodeRuntime(s.cfg, s.kernel.Protocols(), bootstrap.Config, s.cert.TLSCert()); err != nil {
+		s.reportApplication("failed", "validate", err)
 		return err
 	}
 
@@ -306,24 +313,30 @@ func (s *Service) initialSetup(ctx context.Context) error {
 	)
 
 	if len(bootstrap.Users) == 0 {
+		s.reconcileNeeded.Store(true)
 		nlog.Core().Warn("no users, kernel will not start until users are available")
 		s.markMailboxReadyAndDrain(ctx)
 		return nil
 	}
 
-	s.applyRemoteOverrides(ctx, bootstrap.Config)
-	if !s.startKernel(bootstrap.Config, bootstrap.Users) {
-		return fmt.Errorf("start kernel")
+	if _, err := s.applyRemoteOverrides(ctx, bootstrap.Config); err != nil {
+		s.reportApplication("failed", "certificate", err)
+		return err
 	}
+	if !s.startKernel(bootstrap.Config, bootstrap.Users) {
+		s.reportApplication("failed", "kernel", s.lastKernelError)
+		return fmt.Errorf("start kernel: %w", s.lastKernelError)
+	}
+	s.confirmApplication()
 	s.markMailboxReadyAndDrain(ctx)
 	return nil
 }
 
 // applyRemoteOverrides updates service-level settings (log level, cert config)
 // from the panel's NodeConfig. Returns true if cert paths changed (kernel restart needed).
-func (s *Service) applyRemoteOverrides(ctx context.Context, nc *model.NodeSpec) bool {
+func (s *Service) applyRemoteOverrides(ctx context.Context, nc *model.NodeSpec) (bool, error) {
 	if nc == nil {
-		return false
+		return false, nil
 	}
 
 	// Dynamic Log Level (Kernel)
@@ -346,14 +359,14 @@ func (s *Service) applyRemoteOverrides(ctx context.Context, nc *model.NodeSpec) 
 		s.cfg.Cert.Domain = nc.Domain
 	}
 
-	return false
+	return false, nil
 }
 
 // applyPanelCert converts a panel CertConfig into the local config format and
 // reconfigures the cert manager. Reports whether cert paths changed.
-func (s *Service) applyNodeCert(ctx context.Context, newCfg *config.CertConfig) bool {
+func (s *Service) applyNodeCert(ctx context.Context, newCfg *config.CertConfig) (bool, error) {
 	if newCfg == nil {
-		return false
+		return false, nil
 	}
 	cfgCopy := *newCfg
 	cfgCopy.CertDir = s.cfg.Cert.CertDir
@@ -361,7 +374,7 @@ func (s *Service) applyNodeCert(ctx context.Context, newCfg *config.CertConfig) 
 	changed, err := s.cert.Reconfigure(ctx, cfgCopy)
 	if err != nil {
 		nlog.Core().Error("failed to apply runtime cert config", "mode", cfgCopy.CertMode, "error", err)
-		return false
+		return false, err
 	}
 	s.cfg.Cert = cfgCopy
 	if changed {
@@ -372,7 +385,7 @@ func (s *Service) applyNodeCert(ctx context.Context, newCfg *config.CertConfig) 
 			nlog.Core().Info(msg)
 		}
 	}
-	return changed
+	return changed, nil
 }
 
 // startWSClient starts the push client goroutine if a client is configured.
@@ -420,6 +433,7 @@ func (s *Service) drainMachineMailbox(ctx context.Context) {
 }
 
 func (s *Service) requestWSResync(ctx context.Context, reason string) {
+	s.reconcileNeeded.Store(true)
 	if !s.wsResyncPending.CompareAndSwap(false, true) {
 		return
 	}
@@ -544,21 +558,7 @@ func (s *Service) handleWSEvent(ctx context.Context, event controlplane.Event) {
 		if newConfigHash == s.lastConfigHash {
 			return
 		}
-		if err := validateNodeRuntime(s.cfg, s.kernel.Protocols(), event.Config, s.cert.TLSCert()); err != nil {
-			nlog.Core().Warn("ws config validation failed, ignoring update", "error", err)
-			return
-		}
-		// Initialize nodeLog on first config
-		if s.nodeLog == nil {
-			s.nodeLog = nlog.ForNode(event.Config.Protocol, event.Config.ServerPort)
-		}
-		s.nodeLog.Info(fmt.Sprintf("config updated, %d users", len(event.Users)))
-		s.metricsMu.Lock()
-		s.lastConfig = event.Config
-		s.metricsMu.Unlock()
-		s.lastConfigHash = newConfigHash
-		s.applyRemoteOverrides(ctx, event.Config)
-		s.applyChanges(ctx, true, false)
+		s.applyPullResult(ctx, pullResult{config: event.Config, configHash: newConfigHash})
 
 	case controlplane.EventSyncUsers:
 		if event.Users == nil {
@@ -616,13 +616,15 @@ func (s *Service) pullViaAPIAsync(ctx context.Context) {
 		defer s.pullActive.Store(false)
 		snapshot, err := s.source.Poll(ctx)
 		if err != nil {
+			s.reconcileNeeded.Store(true)
+			s.wsResyncPending.Store(false)
 			nlog.Core().Error("poll control plane failed", "error", err)
 			s.pullBackoff.onFailure()
 			return
 		}
 		s.pullBackoff.onSuccess()
 
-		result := pullResult{certChanged: certChanged}
+		result := pullResult{certChanged: certChanged, revision: snapshot.Revision}
 		if snapshot.Config != nil {
 			result.config = snapshot.Config
 			result.configHash = computeConfigHash(snapshot.Config)
@@ -645,47 +647,116 @@ func (s *Service) pullViaAPIAsync(ctx context.Context) {
 // applyPullResult processes the result of an async pullViaAPI on the main goroutine.
 func (s *Service) applyPullResult(ctx context.Context, result pullResult) {
 	s.wsResyncPending.Store(false)
-	configChanged := false
-
-	if result.certChanged {
-		nlog.Core().Info("certificate renewed, kernel restart needed")
-		configChanged = true
+	previousRevision := s.desiredRevision
+	if result.revision > 0 {
+		s.desiredRevision = result.revision
 	}
-
 	if result.config != nil {
 		if err := validateNodeRuntime(s.cfg, s.kernel.Protocols(), result.config, s.cert.TLSCert()); err != nil {
+			s.reconcileNeeded.Store(true)
 			nlog.Core().Warn("runtime config validation failed", "error", err)
-			result.config = nil
-		} else {
-			configChanged = true
-			// Initialize or update node logger
-			if s.nodeLog == nil {
-				s.nodeLog = nlog.ForNode(result.config.Protocol, result.config.ServerPort)
-			}
-			s.nodeLog.Info(fmt.Sprintf("config updated, %d users", len(s.lastUsers)))
-			s.metricsMu.Lock()
-			s.lastConfig = result.config
-			s.metricsMu.Unlock()
-			s.lastConfigHash = result.configHash
-			if s.applyRemoteOverrides(ctx, result.config) {
-				configChanged = true
-			}
+			s.reportApplication("failed", "validate", err)
+			s.desiredRevision = previousRevision
+			return
 		}
 	}
-
-	if result.users != nil {
-		usersChanged := result.userHash != s.lastUserHash
-
-		if usersChanged && !configChanged {
-			s.applyUserUpdate(ctx, result.users, result.userHash)
-		} else if usersChanged {
+	previousConfig, previousHash := s.lastConfig, s.lastConfigHash
+	previousUsers, previousUserHash := append([]model.UserSpec(nil), s.lastUsers...), s.lastUserHash
+	var previousCert config.CertConfig
+	var previousLogLevel string
+	if s.cfg != nil {
+		previousCert, previousLogLevel = s.cfg.Cert, s.cfg.Kernel.LogLevel
+	}
+	configChanged := result.certChanged || result.config != nil
+	if result.config != nil {
+		if _, err := s.applyRemoteOverrides(ctx, result.config); err != nil {
+			s.reconcileNeeded.Store(true)
+			s.reportApplication("failed", "certificate", err)
+			if s.cfg != nil {
+				s.cfg.Kernel.LogLevel = previousLogLevel
+				_, _ = s.cert.Reconfigure(ctx, previousCert)
+				s.cfg.Cert = previousCert
+			}
+			s.desiredRevision = previousRevision
+			return
+		}
+		if s.nodeLog == nil {
+			s.nodeLog = nlog.ForNode(result.config.Protocol, result.config.ServerPort)
+		}
+		s.metricsMu.Lock()
+		s.lastConfig = result.config
+		s.metricsMu.Unlock()
+		s.lastConfigHash = result.configHash
+	}
+	if result.users != nil && result.userHash != s.lastUserHash {
+		if configChanged {
 			s.updateUserState(result.users)
+		} else {
+			s.applyUserUpdate(ctx, result.users, result.userHash)
 		}
 	}
-
+	succeeded := true
 	if configChanged {
-		s.applyChanges(ctx, true, false)
+		succeeded = s.applyChanges(ctx, true, false)
 	}
+	if !succeeded || (result.users != nil && result.userHash != s.lastUserHash) {
+		s.reconcileNeeded.Store(true)
+		failure := s.lastKernelError
+		if failure == nil {
+			failure = fmt.Errorf("user authorization update failed")
+		}
+		s.reportApplication("failed", "kernel", failure)
+		// A failed replacement must not become the new baseline: otherwise the
+		// next poll would hash-match it and never retry. Restore runtime inputs
+		// and, if a kernel performed a partial reload, reapply the last good one.
+		if s.cfg != nil {
+			s.cfg.Kernel.LogLevel = previousLogLevel
+			_, _ = s.cert.Reconfigure(ctx, previousCert)
+			s.cfg.Cert = previousCert
+		}
+		s.metricsMu.Lock()
+		s.lastConfig = previousConfig
+		s.metricsMu.Unlock()
+		s.lastConfigHash = previousHash
+		s.restoreUserState(previousUsers, previousUserHash)
+		s.desiredRevision = previousRevision
+		if previousConfig != nil && len(previousUsers) > 0 {
+			if err := s.kernel.Reload(previousConfig, previousUsers, s.cert.TLSCert()); err != nil {
+				if err = s.kernel.Start(previousConfig, previousUsers, s.cert.TLSCert()); err != nil {
+					nlog.Core().Error("failed to restore last good runtime", "error", err)
+				}
+			}
+		}
+		return
+	}
+	s.confirmApplication()
+}
+
+func (s *Service) reportApplication(status, stage string, err error) {
+	if s.desiredRevision <= 0 {
+		return
+	}
+	reporter, ok := s.source.(controlplane.ApplicationReporter)
+	if !ok {
+		return
+	}
+	message := ""
+	if err != nil {
+		message = err.Error()
+	}
+	reporter.ReportApplication(controlplane.ApplicationResult{Revision: s.desiredRevision, Status: status, Stage: stage, Error: message})
+}
+
+func (s *Service) confirmApplication() {
+	if !s.kernel.IsRunning() {
+		return
+	}
+	s.reconcileNeeded.Store(false)
+	if s.desiredRevision <= 0 || s.desiredRevision == s.appliedRevision {
+		return
+	}
+	s.appliedRevision = s.desiredRevision
+	s.reportApplication("applied", "kernel", nil)
 }
 
 // ─── User state helpers ─────────────────────────────────────────────────────
@@ -734,9 +805,11 @@ func (s *Service) restoreUserState(users []model.UserSpec, hash string) {
 func (s *Service) startKernel(nc *model.NodeSpec, users []model.UserSpec) bool {
 	if err := s.kernel.Start(nc, users, s.cert.TLSCert()); err != nil {
 		nlog.Core().Error("failed to start kernel", "error", err)
+		s.lastKernelError = err
 		return false
 	}
 
+	s.lastKernelError = nil
 	s.appliedState.Config = nc
 	s.appliedState.Users = users
 
@@ -758,12 +831,21 @@ func (s *Service) startKernel(nc *model.NodeSpec, users []model.UserSpec) bool {
 // Called from WS sync.users and REST polling.
 func (s *Service) applyUserUpdate(ctx context.Context, users []model.UserSpec, newHash string) {
 	if !s.kernel.IsRunning() {
+		if len(users) > 0 && s.lastConfig != nil && s.cfg != nil {
+			if _, err := s.applyRemoteOverrides(ctx, s.lastConfig); err != nil {
+				s.lastKernelError = err
+				s.reconcileNeeded.Store(true)
+				s.reportApplication("failed", "certificate", err)
+				return
+			}
+		}
 		prevUsers, prevHash := s.prepareUserState(users)
 		if len(users) > 0 && s.lastConfig != nil && !s.startKernel(s.lastConfig, users) {
 			s.restoreUserState(prevUsers, prevHash)
 		}
 		if newHash != "" && len(users) > 0 && s.kernel.IsRunning() {
 			s.lastUserHash = newHash
+			s.confirmApplication()
 		}
 		return
 	}
@@ -780,6 +862,7 @@ func (s *Service) applyUserUpdate(ctx context.Context, users []model.UserSpec, n
 	if newHash != "" {
 		s.lastUserHash = newHash
 	}
+	s.confirmApplication()
 	if s.nodeLog != nil && (added > 0 || removed > 0) {
 		s.nodeLog.Info(fmt.Sprintf("users updated: +%d -%d", added, removed))
 	}
@@ -902,35 +985,29 @@ func subtractUsers(base, delta []model.UserSpec) []model.UserSpec {
 
 // applyChanges applies config changes to the kernel. User-only changes are
 // handled by applyUserUpdate/applyUserDelta directly via the atomic user API.
-func (s *Service) applyChanges(ctx context.Context, configChanged, usersChanged bool) {
+func (s *Service) applyChanges(ctx context.Context, configChanged, usersChanged bool) bool {
 	if !configChanged {
-		return
+		return true
 	}
-
 	if s.lastConfig == nil || len(s.lastUsers) == 0 {
 		if len(s.lastUsers) == 0 {
 			s.kernel.Stop()
 			s.appliedState.Users = nil
 		}
-		return
+		return true
 	}
-
-	// If config changed, delegate to kernel.Reload. The kernel implementation
-	// decides whether to hot-swap users, reconstruct inbounds, or restart itself.
-	if configChanged && s.kernel.IsRunning() {
+	if s.kernel.IsRunning() {
 		if err := s.kernel.Reload(s.lastConfig, s.lastUsers, s.cert.TLSCert()); err != nil {
-			nlog.Core().Warn(fmt.Sprintf("reload failed, restarting: %v", err))
-			s.startKernel(s.lastConfig, s.lastUsers)
-		} else {
-			s.appliedState.Config = s.lastConfig
-			s.appliedState.Users = s.lastUsers
-			if s.nodeLog != nil {
-				s.nodeLog.Info(fmt.Sprintf("config updated, %d users", len(s.lastUsers)))
-			}
+			nlog.Core().Warn("reload failed", "error", err)
+			s.lastKernelError = err
+			return false
 		}
-	} else if !s.kernel.IsRunning() {
-		s.startKernel(s.lastConfig, s.lastUsers)
+		s.lastKernelError = nil
+		s.appliedState.Config = s.lastConfig
+		s.appliedState.Users = s.lastUsers
+		return true
 	}
+	return s.startKernel(s.lastConfig, s.lastUsers)
 }
 
 func (s *Service) trackAndEnforce(ctx context.Context) {
@@ -1018,16 +1095,17 @@ func (s *Service) beginReport() *controlplane.ReportPayload {
 	metrics := s.buildMetrics(status)
 	metrics["kernel_status"] = s.kernel.IsRunning()
 	payload := controlplane.ReportPayload{
-		BatchID:    newReportBatchID(),
-		OccurredAt: time.Now().UTC().Format(time.RFC3339Nano),
-		Traffic:    cloneTraffic(s.tracker.FlushTraffic()),
-		Alive:      cloneAliveIPs(s.tracker.FlushAliveIPs()),
-		Online:     s.tracker.CurrentOnline(),
-		CPU:        status.CPU,
-		Mem:        [2]uint64{status.MemTotal, status.MemUsed},
-		Swap:       [2]uint64{status.SwapTotal, status.SwapUsed},
-		Disk:       [2]uint64{status.DiskTotal, status.DiskUsed},
-		Metrics:    metrics,
+		AppliedRevision: s.appliedRevision,
+		BatchID:         newReportBatchID(),
+		OccurredAt:      time.Now().UTC().Format(time.RFC3339Nano),
+		Traffic:         cloneTraffic(s.tracker.FlushTraffic()),
+		Alive:           cloneAliveIPs(s.tracker.FlushAliveIPs()),
+		Online:          s.tracker.CurrentOnline(),
+		CPU:             status.CPU,
+		Mem:             [2]uint64{status.MemTotal, status.MemUsed},
+		Swap:            [2]uint64{status.SwapTotal, status.SwapUsed},
+		Disk:            [2]uint64{status.DiskTotal, status.DiskUsed},
+		Metrics:         metrics,
 	}
 	s.pendingReport = &payload
 	copy := cloneReportPayload(payload)
