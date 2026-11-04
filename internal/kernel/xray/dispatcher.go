@@ -3,6 +3,7 @@ package xray
 import (
 	"context"
 	"errors"
+	"maps"
 	"reflect"
 	"sort"
 	"sync"
@@ -76,14 +77,14 @@ type LimitDispatcher struct {
 	deviceLimits map[string]int            // email → max devices
 	emailToUID   map[string]int            // email → panel user ID
 
-	// unlimitedIPs: users without device limit — sync.Map for lock-free access.
+	// unlimitedIPs: users without device limits; lifecycle updates are protected by mu.
 	// Each entry is *ipCounter{ips sync.Map}.
 	unlimitedIPs sync.Map // email → *ipCounter
 
 	connCount atomic.Int64 // total active connections tracked by dispatcher
 }
 
-// ipCounter tracks IPs for unlimited users without any lock.
+// ipCounter tracks IPs for unlimited users; its lifecycle is protected by dispatcher.mu.
 type ipCounter struct {
 	ips sync.Map // sourceIP → *atomic.Int64 (refcount)
 }
@@ -194,16 +195,16 @@ func (d *LimitDispatcher) Close() error {
 
 func (d *LimitDispatcher) UpdateLimits(emailToUID map[string]int, deviceLimits, _ map[string]int) {
 	d.mu.Lock()
-	d.emailToUID = emailToUID
-	d.deviceLimits = deviceLimits
+	d.emailToUID = maps.Clone(emailToUID)
+	d.deviceLimits = maps.Clone(deviceLimits)
 	d.mu.Unlock()
 
 }
 
 func (d *LimitDispatcher) ResetConns() {
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.limitedIPs = make(map[string]map[string]int)
-	d.mu.Unlock()
 
 	// Clear unlimited IPs
 	d.unlimitedIPs.Range(func(key, _ interface{}) bool {
@@ -218,9 +219,9 @@ func (d *LimitDispatcher) ResetConns() {
 // Traffic bytes are intentionally left to xray's built-in stats pipeline.
 func (d *LimitDispatcher) GetConnectionState() (aliveIPs map[int]map[string]bool, connCount int) {
 	d.mu.RLock()
+	defer d.mu.RUnlock()
 	emailToUID := d.emailToUID
 	limitedIPs := d.limitedIPs
-	d.mu.RUnlock()
 
 	aliveIPs = make(map[int]map[string]bool)
 
@@ -239,7 +240,8 @@ func (d *LimitDispatcher) GetConnectionState() (aliveIPs map[int]map[string]bool
 		}
 	}
 
-	// Collect IPs from unlimited users (lock-free).
+	// Collect unlimited IPs under the same read lock for a stable identity mapping
+	// and so counter deletion cannot overlap construction of the snapshot.
 	d.unlimitedIPs.Range(func(key, value interface{}) bool {
 		email := key.(string)
 		uid := emailToUID[email]
@@ -267,15 +269,15 @@ func (d *LimitDispatcher) GetConnectionState() (aliveIPs map[int]map[string]bool
 // ─── Internal helpers ───────────────────────────────────────────────────────
 
 // checkDeviceLimit enforces per-user device limits.
-// Fast path: unlimited users use lock-free sync.Map.
-// Slow path: limited users use RWMutex with deterministic IP ordering.
+// Admission and the refcount increment share one critical section. Splitting
+// read/check/write or atomic increment/delete can lose an active IP.
 func (d *LimitDispatcher) checkDeviceLimit(email, sourceIP string, isTCP bool) bool {
-	d.mu.RLock()
-	limit, hasLimit := d.deviceLimits[email]
-	d.mu.RUnlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	limit := d.deviceLimits[email]
 
-	// Fast path: no device limit — use lock-free sync.Map.
-	if !hasLimit || limit <= 0 {
+	// Unlimited users skip the ordering check.
+	if limit <= 0 {
 		if isTCP {
 			v, _ := d.unlimitedIPs.LoadOrStore(email, &ipCounter{})
 			ic := v.(*ipCounter)
@@ -287,39 +289,8 @@ func (d *LimitDispatcher) checkDeviceLimit(email, sourceIP string, isTCP bool) b
 		return false
 	}
 
-	// Slow path: user has device limit — need deterministic ordering.
-	d.mu.RLock()
+	// Limited users retain deterministic admission ordering.
 	ips := d.limitedIPs[email]
-	if ips != nil && ips[sourceIP] > 0 {
-		d.mu.RUnlock()
-		if isTCP {
-			d.mu.Lock()
-			d.limitedIPs[email][sourceIP]++
-			d.mu.Unlock()
-		}
-		return false
-	}
-
-	if ips != nil && len(ips) < limit {
-		d.mu.RUnlock()
-		if isTCP {
-			d.mu.Lock()
-			if d.limitedIPs[email] == nil {
-				d.limitedIPs[email] = make(map[string]int)
-			}
-			d.limitedIPs[email][sourceIP]++
-			d.mu.Unlock()
-		}
-		return false
-	}
-	d.mu.RUnlock()
-
-	// Over limit — need write lock for deterministic check.
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	// Re-check under write lock.
-	ips = d.limitedIPs[email]
 	if ips == nil {
 		ips = make(map[string]int)
 		d.limitedIPs[email] = ips
@@ -360,7 +331,9 @@ func (d *LimitDispatcher) checkDeviceLimit(email, sourceIP string, isTCP bool) b
 
 // delConn decrements the IP refcount when a connection closes.
 func (d *LimitDispatcher) delConn(email, sourceIP string) {
-	// Check if this is an unlimited user first (lock-free).
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	// Serialize deletion with admission so it cannot delete a newly reused counter.
 	if v, ok := d.unlimitedIPs.Load(email); ok {
 		ic := v.(*ipCounter)
 		if rv, ok := ic.ips.Load(sourceIP); ok {
@@ -368,13 +341,11 @@ func (d *LimitDispatcher) delConn(email, sourceIP string) {
 			if counter.Add(-1) <= 0 {
 				ic.ips.Delete(sourceIP)
 			}
+			return
 		}
-		return
 	}
 
-	// Limited user — use write lock.
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	// A user may have changed limit class while existing connections remained.
 	if ips, ok := d.limitedIPs[email]; ok {
 		ips[sourceIP]--
 		if ips[sourceIP] <= 0 {

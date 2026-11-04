@@ -1,6 +1,8 @@
 package xray
 
 import (
+	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -230,5 +232,97 @@ func TestLimitDispatcher_CloseTrackingWriterReleasesConn(t *testing.T) {
 	}
 	if ld.checkDeviceLimit(email, "2.2.2.2", true) {
 		t.Fatal("device slot should be released after writer close")
+	}
+}
+
+func TestLimitDispatcherOwnsLimitsAndSnapshots(t *testing.T) {
+	ld := newTestDispatcher()
+	email := userEmail(1)
+	identities := map[string]int{email: 1}
+	limits := map[string]int{email: 1}
+	ld.UpdateLimits(identities, limits, nil)
+	// Callers retain ownership of their maps after UpdateLimits returns.
+	identities[email] = 2
+	limits[email] = 0
+	if ld.checkDeviceLimit(email, "1.1.1.1", true) {
+		t.Fatal("first device rejected")
+	}
+	if !ld.checkDeviceLimit(email, "2.2.2.2", true) {
+		t.Fatal("caller mutated the installed device limit")
+	}
+	snapshot, _ := ld.GetConnectionState()
+	if !snapshot[1]["1.1.1.1"] || snapshot[2] != nil {
+		t.Fatal("caller mutated the installed identity mapping")
+	}
+	delete(snapshot[1], "1.1.1.1")
+	snapshot[1]["3.3.3.3"] = true
+	next, _ := ld.GetConnectionState()
+	if !next[1]["1.1.1.1"] || next[1]["3.3.3.3"] {
+		t.Fatal("returned IP snapshot aliases dispatcher state")
+	}
+	ld.delConn(email, "1.1.1.1")
+	if !snapshot[1]["3.3.3.3"] || !next[1]["1.1.1.1"] {
+		t.Fatal("closing a connection mutated a previously returned snapshot")
+	}
+}
+
+func TestLimitDispatcherConcurrentLifecycleSnapshotsAndReset(t *testing.T) {
+	ld := newTestDispatcher()
+	limited, unlimited := userEmail(1), userEmail(2)
+	ld.UpdateLimits(map[string]int{limited: 1, unlimited: 2}, map[string]int{limited: 8}, nil)
+	start := make(chan struct{})
+	var work sync.WaitGroup
+	for worker := range 4 {
+		work.Add(1)
+		go func() {
+			defer work.Done()
+			<-start
+			ip := fmt.Sprintf("1.1.1.%d", worker+1)
+			for range 1000 {
+				for _, email := range []string{limited, unlimited} {
+					if !ld.checkDeviceLimit(email, ip, true) {
+						ld.delConn(email, ip)
+					}
+				}
+			}
+		}()
+	}
+	for range 2 {
+		work.Add(1)
+		go func() {
+			defer work.Done()
+			<-start
+			for range 2000 {
+				snapshot, _ := ld.GetConnectionState()
+				// Also mutate the result while concurrent writers alter the source.
+				for _, ips := range snapshot {
+					ips["snapshot-only"] = true
+				}
+			}
+		}()
+	}
+	work.Add(1)
+	go func() {
+		defer work.Done()
+		<-start
+		for index := range 1000 {
+			identities := map[string]int{limited: 1, unlimited: 2}
+			limits := map[string]int{limited: 8}
+			ld.UpdateLimits(identities, limits, nil)
+			// This must not race with the dispatcher's snapshot/admission readers.
+			delete(identities, limited)
+			delete(limits, limited)
+			if index%2 == 0 {
+				ld.ResetConns()
+			}
+		}
+	}()
+	close(start)
+	work.Wait()
+	state, _ := ld.GetConnectionState()
+	for _, ips := range state {
+		if ips["snapshot-only"] {
+			t.Fatal("snapshot mutation leaked into dispatcher state")
+		}
 	}
 }
