@@ -35,3 +35,6 @@ internal/tracker/tracker_bench_test.go
 cmd/corade-bench-compare
 cmd/corade-bench
 .env
+
+# Offline packaging test bytecode
+__pycache__/

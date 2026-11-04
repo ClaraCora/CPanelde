@@ -34,6 +34,10 @@ jobs:
           docker run --rm -v "$PWD:/src:ro" alpine:3.22 /bin/sh /src/.github/tests/systemd-install-test.sh
           docker run --rm --privileged -v "$PWD:/src:ro" -v /tmp/coradectl:/usr/local/bin/coradectl:ro alpine:3.22 /bin/sh /src/.github/tests/openrc-install-test.sh
       - run: go test ./...
+      - name: Test offline upgrade and package authentication
+        run: |
+          python3 .github/tests/offline-upgrade-test.py
+          python3 .github/tests/offline-package-test.py
 
   publish:
     name: Build and publish to CPP
@@ -118,6 +122,18 @@ jobs:
           (cd dist && find . -maxdepth 1 -type f ! -name release-manifest.sha256 ! -name release-manifest.sha256.sig -printf '%f\0' | LC_ALL=C sort -z | xargs -0 sha256sum >release-manifest.sha256)
           openssl pkeyutl -sign -inkey "$signing_key" -rawin -in dist/release-manifest.sha256 -out dist/release-manifest.sha256.sig
           openssl pkeyutl -verify -pubin -inkey internal/releaseverify/release-public-key.pem -rawin -in dist/release-manifest.sha256 -sigfile dist/release-manifest.sha256.sig
+          python3 packaging/offline/build.py --release-dir dist --output-dir dist \
+            --signing-key "$signing_key" --source "$GITHUB_SHA" --epoch "$(git show -s --format=%ct HEAD)"
+          # The bundle contains the original signed release. The outer manifest
+          # additionally authenticates the complete offline archive and signatures.
+          (cd dist && find . -maxdepth 1 -type f ! -name release-manifest.sha256 ! -name release-manifest.sha256.sig -printf '%f\0' | LC_ALL=C sort -z | xargs -0 sha256sum >release-manifest.sha256)
+          openssl pkeyutl -sign -inkey "$signing_key" -rawin -in dist/release-manifest.sha256 -out dist/release-manifest.sha256.sig
+          openssl pkeyutl -verify -pubin -inkey internal/releaseverify/release-public-key.pem -rawin -in dist/release-manifest.sha256 -sigfile dist/release-manifest.sha256.sig
+          (cd dist && sha256sum -c release-manifest.sha256)
+          mkdir offline-check
+          tar -xzf dist/corade-offline-linux.tar.gz -C offline-check
+          sh offline-check/corade-offline/upgrade.sh --verify
+          docker run --rm -v "$PWD/offline-check:/bundle:ro" alpine:3.22 /bin/sh -c 'apk add --no-cache openssl >/dev/null && sh /bundle/corade-offline/upgrade.sh --verify'
           rm -f "$signing_key"
 
           VERSION_TAG="corade-$VERSION"
@@ -130,11 +146,11 @@ jobs:
             }
             echo "Immutable version already exists for this source commit; keeping its published assets"
           else
-            gh release create "$VERSION_TAG" dist/* --repo "$GH_REPO" --title "Corade $VERSION" --notes "Corade $BUILD_VERSION. Checksums and source metadata are included in the assets."
+            gh release create "$VERSION_TAG" dist/* --repo "$GH_REPO" --title "Corade $VERSION" --notes "Corade $BUILD_VERSION. Includes the signed offline upgrade bundle corade-offline-linux.tar.gz for Linux amd64 and arm64. See CPP README for offline verification and upgrade instructions."
           fi
 
           ROLLING_TAG="corade-latest"
-          NOTES="Rolling Corade build $BUILD_VERSION. Checksums and source metadata are included in the assets."
+          NOTES="Rolling Corade build $BUILD_VERSION. Includes the signed offline upgrade bundle corade-offline-linux.tar.gz for Linux amd64 and arm64. See CPP README for offline verification and upgrade instructions."
           if gh release view "$ROLLING_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
             gh release edit "$ROLLING_TAG" --repo "$GH_REPO" --title "Corade latest ($BUILD_VERSION)" --prerelease --notes "$NOTES"
             gh release upload "$ROLLING_TAG" dist/* --repo "$GH_REPO" --clobber

@@ -26,6 +26,11 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Test offline upgrade and package authentication
+        run: |
+          python3 .github/tests/offline-upgrade-test.py
+          python3 .github/tests/offline-package-test.py
+
       - name: Validate POSIX and Alpine installer syntax
         run: |
           sh -n install.sh

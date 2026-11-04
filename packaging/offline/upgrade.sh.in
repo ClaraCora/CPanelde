@@ -1,0 +1,250 @@
+#!/bin/sh
+# Offline wrapper for the original signed Corade release. No downloads.
+set -eu
+umask 077
+VERSION='@VERSION@'
+SOURCE='@SOURCE@'
+KEY_SHA='@KEY_SHA@'
+ROOT=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
+RELEASE="$ROOT/release"
+BIN_DIR='/usr/local/bin'
+CONFIG_DIR='/etc/corade'
+SYSTEMD_FILE='/etc/systemd/system/corade.service'
+OPENRC_FILE='/etc/init.d/corade'
+SYSTEMD_MARKER='/run/systemd/system'
+BACKUP_ROOT='/var/backups/corade'
+LOCK_DIR='/run/lock/corade-offline-upgrade.lock'
+LOCKED=0
+SWITCHING=0
+STAGE_DIR=''
+BACKUP=''
+
+log() { printf '[corade-offline] %s\n' "$*"; }
+fail() { log "ERROR: $*" >&2; exit 1; }
+usage() {
+  cat <<'HELP'
+Usage:
+  sh upgrade.sh --verify             Verify package only; no service changes
+  sudo sh upgrade.sh --check         Verify package and existing installation
+  sudo sh upgrade.sh --apply         Back up, upgrade and check local health
+  sudo sh upgrade.sh --rollback /var/backups/corade/offline-TIMESTAMP-PID
+
+Linux amd64/arm64; existing standard systemd/OpenRC installation only.
+No GitHub access or package installation. Configuration and identity are retained.
+Service checks do not prove that the panel received a heartbeat or applied a node.
+HELP
+}
+
+detect_host() {
+  [ "$(uname -s)" = Linux ] || fail 'Linux is required'
+  case "$(uname -m)" in
+    x86_64|amd64) ARCH=amd64 ;;
+    aarch64|arm64) ARCH=arm64 ;;
+    *) fail 'Only Linux amd64 and arm64 are supported' ;;
+  esac
+}
+
+verify_release() {
+  for cmd in openssl sha256sum awk tr; do
+    command -v "$cmd" >/dev/null 2>&1 || fail "Missing dependency: $cmd (install before going offline)"
+  done
+  printf '%s  %s\n' "$KEY_SHA" "$ROOT/release-public-key.pem" | sha256sum -c - >/dev/null || fail 'Release public key differs from the pinned key'
+  openssl pkeyutl -verify -pubin -inkey "$ROOT/release-public-key.pem" -rawin \
+    -in "$ROOT/SHA256SUMS" -sigfile "$ROOT/SHA256SUMS.sig" >/dev/null 2>&1 || fail 'Offline package signature verification failed'
+  awk '
+    NF != 2 || length($1) != 64 || $1 !~ /^[[:xdigit:]]+$/ || ($2 !~ /^release\/[A-Za-z0-9][A-Za-z0-9._-]*$/ && $2 !~ /^(upgrade.sh|rollback.sh|release-public-key.pem|README.md)$/) { bad=1; exit }
+    seen[$2]++ { bad=1; exit }
+    END { if (bad || NR == 0) exit 1 }
+  ' "$ROOT/SHA256SUMS" || fail 'Invalid offline package manifest'
+  (cd "$ROOT" && sha256sum -c SHA256SUMS) || fail 'Offline package checksum verification failed'
+  openssl pkeyutl -verify -pubin -inkey "$ROOT/release-public-key.pem" -rawin \
+    -in "$RELEASE/release-manifest.sha256" -sigfile "$RELEASE/release-manifest.sha256.sig" >/dev/null 2>&1 || fail 'Release signature verification failed (OpenSSL 3 required)'
+  awk '
+    NF != 2 || length($1) != 64 || $1 !~ /^[[:xdigit:]]+$/ || $2 !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/ { bad=1; exit }
+    seen[$2]++ { bad=1; exit }
+    END { if (bad || NR == 0) exit 1 }
+  ' "$RELEASE/release-manifest.sha256" || fail 'Invalid signed manifest'
+  (cd "$RELEASE" && sha256sum -c release-manifest.sha256) || fail 'Release asset checksum verification failed'
+  [ "$(tr -d '\r\n' <"$RELEASE/agent-version.txt")" = "$VERSION" ] || fail 'Unexpected release version'
+  [ "$(tr -d '\r\n' <"$RELEASE/source-sha.txt")" = "$SOURCE" ] || fail 'Unexpected release source'
+  log "Original release signature, all assets and source verified: $VERSION"
+}
+
+detect_service() {
+  if command -v systemctl >/dev/null 2>&1 && [ -d "$SYSTEMD_MARKER" ] && [ -f "$SYSTEMD_FILE" ]; then
+    MANAGER=systemd
+    start_command=$(systemctl show corade.service --property=ExecStart --value)
+    case "$start_command" in *"path=$BIN_DIR/corade "*) ;; *) fail 'Custom service binary path; this package expects /usr/local/bin/corade' ;; esac
+  elif command -v rc-service >/dev/null 2>&1 && [ -f "$OPENRC_FILE" ]; then
+    MANAGER=openrc
+  else
+    fail 'No existing standard Corade systemd/OpenRC service was found'
+  fi
+}
+
+service_action() {
+  if [ "$MANAGER" = systemd ]; then systemctl "$1" corade.service
+  else rc-service corade "$1"; fi
+}
+
+service_active() {
+  if [ "$MANAGER" = systemd ]; then systemctl is-active --quiet corade.service
+  else rc-service --quiet corade status >/dev/null 2>&1; fi
+}
+
+healthy() {
+  service_active || return 1
+  if [ "$HEALTH_PORT" != 0 ]; then
+    curl --noproxy '*' --fail --silent --show-error --connect-timeout 1 --max-time 2 \
+      "http://127.0.0.1:$HEALTH_PORT/healthz" >/dev/null 2>&1 || return 1
+  fi
+}
+
+wait_healthy() {
+  attempt=0
+  while [ "$attempt" -lt 30 ]; do
+    if healthy; then return 0; fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  return 1
+}
+
+installation_check() {
+  [ "$(id -u)" = 0 ] || fail 'Run with sudo or as root'
+  for cmd in cp mv chmod mkdir mktemp tar date df find sort; do
+    command -v "$cmd" >/dev/null 2>&1 || fail "Missing dependency: $cmd"
+  done
+  for name in corade coradectl; do
+    [ -f "$BIN_DIR/$name" ] && [ -x "$BIN_DIR/$name" ] && [ ! -L "$BIN_DIR/$name" ] || fail "Expected a regular installed binary: $BIN_DIR/$name"
+  done
+  [ -f "$CONFIG_DIR/config.yml" ] || fail 'Existing /etc/corade/config.yml is required; this is not a fresh installer'
+  detect_service
+  service_active || fail 'Existing Agent is not running; repair it before upgrading'
+  HEALTH_PORT=$("$CHECK_CLI" config health-port --config "$CONFIG_DIR/config.yml") || fail 'Cannot read the existing health configuration'
+  HEALTH_PORT=${HEALTH_PORT:-0}
+  case "$HEALTH_PORT" in *[!0-9]*|'') fail 'Invalid health port' ;; esac
+  [ "$HEALTH_PORT" -le 65535 ] || fail 'Invalid health port'
+  if [ "$HEALTH_PORT" != 0 ]; then command -v curl >/dev/null 2>&1 || fail 'curl is required for the local health check'; fi
+  healthy || fail 'Existing Agent fails its local health check; no files changed'
+  CURRENT=$("$BIN_DIR/corade" -v | awk 'NR == 1 { print $1 }')
+  log "Installed: $CURRENT; architecture: $ARCH; service: $MANAGER; health port: $HEALTH_PORT"
+  [ "$HEALTH_PORT" != 0 ] || log 'Health endpoint is disabled; only service state can be checked'
+}
+
+acquire_lock() {
+  mkdir -p "$(dirname "$LOCK_DIR")"
+  mkdir "$LOCK_DIR" 2>/dev/null || fail "Another offline operation may be running: $LOCK_DIR"
+  LOCKED=1
+  printf '%s\n' "$$" >"$LOCK_DIR/pid"
+}
+
+backup_current() {
+  mkdir -p "$BACKUP_ROOT"
+  for dir in "$BIN_DIR" "$BACKUP_ROOT"; do
+    available=$(df -Pk "$dir" | awk 'END { print $4 }')
+    [ "$available" -ge 262144 ] || fail "At least 256 MiB free space is required at $dir"
+  done
+  BACKUP="$BACKUP_ROOT/offline-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  mkdir "$BACKUP"
+  chmod 700 "$BACKUP"
+  cp -p "$BIN_DIR/corade" "$BACKUP/corade.previous"
+  cp -p "$BIN_DIR/coradectl" "$BACKUP/coradectl.previous"
+  (cd "$BACKUP" && sha256sum corade.previous coradectl.previous >binaries.sha256)
+  tar -C "$CONFIG_DIR" -czf "$BACKUP/configuration.tar.gz" .
+  if [ "$MANAGER" = systemd ]; then cp -p "$SYSTEMD_FILE" "$BACKUP/service.previous";
+  else cp -p "$OPENRC_FILE" "$BACKUP/service.previous"; fi
+  printf '%s\n' "$CURRENT" >"$BACKUP/version.previous"
+  printf '%s\n' "$MANAGER" >"$BACKUP/service-manager"
+  printf '%s\n' "$HEALTH_PORT" >"$BACKUP/health-port"
+  log "Backup retained (contains private configuration): $BACKUP"
+}
+
+cleanup() {
+  code=$?
+  trap - EXIT HUP INT TERM
+  set +e
+  if [ "$SWITCHING" = 1 ]; then
+    log 'Upgrade/rollback failed. Restoring the immediately previous binaries.'
+    service_action stop >/dev/null 2>&1
+    restored=1
+    for name in corade coradectl; do
+      cp "$BACKUP/$name.previous" "$STAGE_DIR/$name.restore" && \
+        chmod 755 "$STAGE_DIR/$name.restore" && mv -f "$STAGE_DIR/$name.restore" "$BIN_DIR/$name" || restored=0
+    done
+    if [ "$restored" = 1 ] && service_action start && wait_healthy; then
+      log "Previous Agent restored and locally healthy. Backup: $BACKUP"
+    else
+      log "ERROR: Automatic recovery is incomplete; inspect service logs. Backup: $BACKUP" >&2
+    fi
+    code=1
+  fi
+  if [ -n "$STAGE_DIR" ]; then rm -rf -- "$STAGE_DIR"; fi
+  if [ "$LOCKED" = 1 ]; then rm -f "$LOCK_DIR/pid"; rmdir "$LOCK_DIR"; fi
+  exit "$code"
+}
+
+action=${1:---help}
+case "$action" in --help|-h) usage; exit 0 ;; --verify|--check|--apply) [ "$#" = 1 ] || fail 'Unexpected arguments' ;;
+  --rollback) [ "$#" = 2 ] || fail 'Specify the backup directory' ;;
+  *) usage; exit 1 ;;
+esac
+detect_host
+if [ "$action" = --rollback ]; then
+  [ "$(id -u)" = 0 ] || fail 'Run with sudo or as root'
+  RESTORE=$(CDPATH= cd -P "$2" && pwd) || fail 'Backup directory not found'
+  case "$RESTORE" in "$BACKUP_ROOT"/offline-*) ;; *) fail 'Use an offline backup under /var/backups/corade' ;; esac
+  for name in corade coradectl; do
+    [ -f "$RESTORE/$name.previous" ] && [ ! -L "$RESTORE/$name.previous" ] || fail 'Backup binaries are missing'
+  done
+  # Verify only the two fixed filenames; never trust a filename from backup metadata.
+  for name in corade coradectl; do
+    expected=$(awk -v n="$name.previous" 'NF==2 && $2==n {print $1; count++} END {if(count!=1) exit 1}' "$RESTORE/binaries.sha256") || fail 'Invalid backup checksum record'
+    printf '%s  %s\n' "$expected" "$RESTORE/$name.previous" | sha256sum -c - >/dev/null || fail 'Backup checksum mismatch'
+  done
+  AGENT_SOURCE="$RESTORE/corade.previous"
+  CLI_SOURCE="$RESTORE/coradectl.previous"
+  CHECK_CLI="$BIN_DIR/coradectl"
+else
+  verify_release
+  [ "$action" != --verify ] || exit 0
+  AGENT_SOURCE="$RELEASE/corade-linux-$ARCH"
+  CLI_SOURCE="$RELEASE/coradectl-linux-$ARCH"
+  CHECK_CLI="$CLI_SOURCE"
+fi
+"$AGENT_SOURCE" -v >/dev/null || fail 'Target Agent cannot execute on this host'
+"$CLI_SOURCE" version >/dev/null || fail 'Target CLI cannot execute on this host'
+installation_check
+if [ "$action" != --rollback ]; then
+  current_base=${CURRENT%%+*}
+  printf '%s\n' "$current_base" | awk -F. -v target="${VERSION%%+*}" '
+    { sub(/^v/,"",$1); sub(/^v/,"",target); split(target,t,".")
+      if (NF!=3 || $1!~/^[0-9]+$/ || $2!~/^[0-9]+$/ || $3!~/^[0-9]+$/) exit 1
+      for (i=1;i<=3;i++) { if ($i+0>t[i]+0) exit 1; if ($i+0<t[i]+0) exit 0 }
+    }' || fail 'Unknown or newer installed version; refusing an implicit downgrade'
+fi
+[ "$action" != --check ] || { log 'Preflight passed. No installed files or services changed.'; exit 0; }
+if [ "$action" = --apply ] && [ "$CURRENT" = "$VERSION" ] && \
+  [ "$(sha256sum "$BIN_DIR/corade" | awk '{print $1}')" = "$(sha256sum "$AGENT_SOURCE" | awk '{print $1}')" ] && \
+  [ "$(sha256sum "$BIN_DIR/coradectl" | awk '{print $1}')" = "$(sha256sum "$CLI_SOURCE" | awk '{print $1}')" ]; then
+  log 'This exact release is already installed. No restart needed.'; exit 0
+fi
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+acquire_lock
+backup_current
+STAGE_DIR=$(mktemp -d "$BIN_DIR/.corade-offline-XXXXXX")
+cp "$AGENT_SOURCE" "$STAGE_DIR/corade"
+cp "$CLI_SOURCE" "$STAGE_DIR/coradectl"
+chmod 755 "$STAGE_DIR/corade" "$STAGE_DIR/coradectl"
+SWITCHING=1
+service_action stop
+mv -f "$STAGE_DIR/corade" "$BIN_DIR/corade"
+mv -f "$STAGE_DIR/coradectl" "$BIN_DIR/coradectl"
+service_action start
+wait_healthy || fail 'New Agent did not become locally healthy'
+"$BIN_DIR/corade" -v
+"$BIN_DIR/coradectl" version
+SWITCHING=0
+log "Completed. Configuration, certificates and identities were not overwritten. Backup: $BACKUP"
+log 'Now verify the Agent heartbeat and node application status in CPanel.'

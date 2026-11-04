@@ -51,6 +51,16 @@ Upgrade an installed Agent without entering its communication key again:
 sudo coradectl upgrade
 ```
 
+Offline upgrades are a standard release asset starting with v2.0.11. Download
+`corade-offline-linux.tar.gz`, `.tar.gz.sha256` and `.tar.gz.sha256.sig` from
+[CPP releases](https://github.com/ClaraCora/CPP/releases/tag/corade-latest).
+One bundle includes Linux amd64 and arm64, the CLI, signed release metadata,
+verification, upgrade and rollback scripts. It supports an existing standard
+systemd or OpenRC installation, preserves configuration and identity, and requires
+no GitHub access on the target. Verify the archive before extracting; see
+[the offline download and upgrade guide](https://github.com/ClaraCora/CPP#agent-离线升级包).
+The target still needs access to its configured CPanel for normal operation.
+
 The installer supports Linux amd64 and arm64 with either systemd or Alpine
 OpenRC. It authenticates the signed manifest before installing Agent and `coradectl` binaries from the
 selected GitHub release. Service startup and failed-upgrade rollback use the

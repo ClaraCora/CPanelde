@@ -1,0 +1,54 @@
+# Corade Agent 离线升级包
+
+版本：`@VERSION@`；源提交：`@SOURCE@`。
+
+支持已安装并接入 CPanel 的 Linux amd64 / x86_64 与 arm64 / aarch64 Agent，自动选择架构，兼容标准 systemd 与 Alpine OpenRC。不是首次安装工具，不用于迁移旧面板配置或自定义服务路径。
+
+## 升级
+
+先按 CPP 下载说明，用独立取得的可信发行公钥验证压缩包的 `.sha256.sig`，再校验压缩包摘要、解压。
+
+在本目录执行：
+
+```sh
+sh upgrade.sh --verify        # 验证完整离线包和内层发行签名
+sudo sh upgrade.sh --check    # 检查现有安装，不替换程序或重启
+sudo sh upgrade.sh --apply    # 备份、更新 Agent 与 CLI、检查本机健康状态
+```
+
+已经是 root 时省略 sudo。需要完整目录，不要单独复制脚本。包内所有脚本、说明、元数据及两个架构的程序均受签名清单保护。`release/corade-install.sh` 是原始在线安装器，离线升级请使用本目录的 `upgrade.sh`。
+
+脚本保留 `/etc/corade` 中的配置、证书、身份和原服务定义；无需重新申请登记令牌。程序、CLI 的版本与摘要完全相同时跳过重启；拒绝把可识别的更高版本隐式降级。更换程序或启动、健康检查失败时，自动恢复本次升级前的两份程序。
+
+## 环境
+
+- 标准路径：`/usr/local/bin/corade`、`/usr/local/bin/coradectl`、`/etc/corade/config.yml`；服务名 `corade`。
+- 需要预装 OpenSSL 3、`sh`、`sha256sum`、`awk`、`tar`、`mktemp`、常用文件工具及相应服务管理器；启用本机健康接口时需要 `curl`。
+- 升级过程不下载文件、不安装软件、不访问 GitHub；机器仍需连接原 CPanel 地址才能继续心跳、配置同步和流量上报。
+- 程序目录与备份目录所在文件系统各至少有 256 MiB 可用空间，配置备份可能需要更多空间；解压目录应允许执行程序。
+- 不与面板升级、`coradectl upgrade` 或其他手动升级同时操作。脚本锁只协调离线脚本自身。
+- 预检查要求旧服务健康；关闭健康接口时只能验证服务状态。升级会短暂重启 Agent。
+
+## 验收与回退
+
+```sh
+/usr/local/bin/corade -v
+/usr/local/bin/coradectl version
+/usr/local/bin/coradectl status
+```
+
+然后在 CPanel 确认版本为 `@VERSION@`、心跳正常、节点已应用版本和错误信息符合预期。本机服务启动成功不等于面板已收到心跳或节点已应用配置。
+
+升级输出实际备份路径。需要回退时，将示例替换为该机器的真实路径：
+
+```sh
+sudo sh rollback.sh /var/backups/corade/offline-TIMESTAMP-PID
+```
+
+备份包含私密配置和身份，只保留在目标机器受控目录中。回退校验旧程序摘要，并先备份当前程序；不自动覆盖配置、身份或数据库。不修改其他机器。自动恢复失败时保留输出和备份，检查 systemd journal 或 `/var/log/corade/corade.log`。
+
+## 包结构与信任
+
+`release/` 保留构建时原始发行文件、签名和源提交；`SHA256SUMS` 与 `SHA256SUMS.sig` 对本包全部实际文件验签（清单与其签名自身除外）；包外 `.tar.gz.sha256` 与 `.tar.gz.sha256.sig` 供解压前验证。公钥 SHA-256：`@KEY_SHA@`。公钥须通过独立可信来源取得；同渠道的摘要或公钥不能独立证明发布者身份。
+
+本包不含生产配置、令牌、数据库、证书私钥或 Agent 私有身份。此版本与最新版的下载入口位于 https://github.com/ClaraCora/CPP/releases 。
