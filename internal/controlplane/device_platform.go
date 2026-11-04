@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/ClaraCora/CPanelde/internal/config"
+	"github.com/ClaraCora/CPanelde/internal/model"
 	"github.com/ClaraCora/CPanelde/internal/nlog"
 	"github.com/ClaraCora/CPanelde/internal/platformclient"
 )
@@ -99,6 +101,20 @@ func (p *DevicePlatformControlPlane) snapshot(ctx context.Context) (Snapshot, er
 		return Snapshot{}, fmt.Errorf("device platform returned node %d for requested node %d", spec.NodeID, p.nodeID)
 	}
 	p.ReportApplication(ApplicationResult{Revision: spec.Revision, Status: "received", Stage: "fetch"})
+	actualKernel := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(p.kcfg.Type)), "sing-box", "singbox")
+	if actualKernel == "" {
+		actualKernel = "singbox"
+	}
+	desiredKernel := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(spec.KernelType)), "sing-box", "singbox")
+	if desiredKernel == "" {
+		desiredKernel = actualKernel
+	}
+	desiredKernel = model.ResolveKernelForTransport(spec.Transport(), desiredKernel)
+	if desiredKernel != actualKernel {
+		err := fmt.Errorf("节点要求 %s 内核，当前实例为 %s，等待机器协调器重启", desiredKernel, actualKernel)
+		p.ReportApplication(ApplicationResult{Revision: spec.Revision, Status: "failed", Stage: "kernel", Error: err.Error()})
+		return Snapshot{}, err
+	}
 	modelSpec, err := spec.Model(p.kcfg)
 	if err != nil {
 		p.ReportApplication(ApplicationResult{Revision: spec.Revision, Status: "failed", Stage: "convert", Error: err.Error()})

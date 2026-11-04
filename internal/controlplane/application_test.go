@@ -13,7 +13,7 @@ import (
 )
 
 func TestSnapshotFailureReportsStageWithoutAcknowledging(t *testing.T) {
-	for _, stage := range []string{"convert", "users"} {
+	for _, stage := range []string{"convert", "users", "kernel"} {
 		t.Run(stage, func(t *testing.T) {
 			var results []map[string]any
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +45,11 @@ func TestSnapshotFailureReportsStageWithoutAcknowledging(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"data": data, "error": nil})
 			}))
 			defer server.Close()
-			cp := NewDevicePlatformControlPlane(platformclient.New(server.URL, "token"), 12, config.KernelConfig{Type: "xray"}, 60, 60, nil, nil)
+			actualKernel := "xray"
+			if stage == "kernel" {
+				actualKernel = "singbox"
+			}
+			cp := NewDevicePlatformControlPlane(platformclient.New(server.URL, "token"), 12, config.KernelConfig{Type: actualKernel}, 60, 60, nil, nil)
 			if _, err := cp.Poll(context.Background()); err == nil {
 				t.Fatal("expected snapshot failure")
 			}
