@@ -5,6 +5,7 @@ import (
 )
 
 func (h *Inbound) UpdateUsers(users []auth.User) error {
-	h.authenticator = auth.NewAuthenticator(users)
+	// Each handshake retains one immutable snapshot while updates publish a new one.
+	h.authenticator.Store(auth.NewAuthenticator(users))
 	return nil
 }

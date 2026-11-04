@@ -5,6 +5,6 @@ import (
 )
 
 func (h *Inbound) UpdateUsers(users []auth.User) error {
-	h.authenticator = auth.NewAuthenticator(users)
+	h.authenticator.Store(auth.NewAuthenticator(users))
 	return nil
 }
